@@ -1,14 +1,16 @@
 #![feature(drain_filter)]
 use ordered_float::OrderedFloat;
 
-use std::{cell::RefCell, collections::{BTreeMap, VecDeque}, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, VecDeque},
+    rc::Rc,
+};
 
 use itertools::Itertools;
-use nalgebra::{Matrix3, Point2, Point3, Rotation2, Vector2};
+use nalgebra::{Point2, Vector2};
 type FPoint2 = Point2<f32>;
-type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
-type FMatrix3 = Matrix3<f32>;
 
 mod edge;
 use edge::{Edge, EdgeContainer, EdgeContainerRcCell, VoronoiEdge};
@@ -323,6 +325,39 @@ impl HalfEdge {
 
         Some(intersected)
     }
+
+    pub fn update_voronoi_edge(&mut self, point: FPoint2) -> Option<Edge> {
+        let is_reversed_he = self.is_reversed_he;
+        match self.edge.as_mut() {
+            Some(ec) => {
+                let mut mut_ec = ec.borrow_mut();
+                let next = match &mut_ec.voronoi_edge {
+                    VoronoiEdge::None => match is_reversed_he {
+                        true => VoronoiEdge::InfFrom(None, Some(point)),
+                        false => VoronoiEdge::InfFrom(Some(point), None),
+                    },
+                    VoronoiEdge::InfFrom(s, None) => match is_reversed_he {
+                        true => VoronoiEdge::Closed(Edge::new(s.unwrap(), point)),
+                        false => unreachable!("Unreachable! InfFrom"),
+                    },
+                    &VoronoiEdge::InfFrom(None, e) => match is_reversed_he {
+                        false => VoronoiEdge::Closed(Edge::new(point, e.unwrap())),
+                        true => unreachable!("Unreachable! InfFrom"),
+                    },
+                    _ => unreachable!("Unreachable! Closed"),
+                };
+                mut_ec.voronoi_edge = next.clone();
+
+                // もしedgeが完成されたら、返す。
+                if let VoronoiEdge::Closed(e) = next {
+                    return Some(e);
+                }
+
+                None
+            }
+            None => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -457,6 +492,29 @@ impl HalfEdgeVertexEvent {
     pub fn into_rccell(self) -> HalfEdgeVertexEventRcCell {
         Rc::new(RefCell::new(self))
     }
+
+    pub fn update_voronoi_edge(&mut self, point: FPoint2) -> Option<Edge> {
+        self.halfedge.borrow_mut().update_voronoi_edge(point)
+    }
+}
+
+impl std::fmt::Debug for HalfEdgeVertexEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Just show left or right is exist.
+        let halfedge_id = self.halfedge.borrow().id;
+        let next_id = match self.up_next.as_ref() {
+            Some(v) => Some(v.borrow().id),
+            None => None,
+        };
+
+        f.debug_struct("VE")
+            .field("ve_id", &self.id)
+            .field("halfedge_id", &halfedge_id)
+            .field("y_star", &self.y_star)
+            .field("vertex", &self.vertex)
+            .field("up_next", &next_id)
+            .finish()
+    }
 }
 
 struct HalfEdgeVertexEventMap {
@@ -474,6 +532,46 @@ impl HalfEdgeVertexEventMap {
                 0f32,
             )
             .into_rccell(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub fn can_process_vertex_event_with(&self, site: FPoint2) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+
+        match self.bottom.borrow().up_next.as_ref() {
+            Some(min) => {
+                let borrowed_min = min.borrow();
+                let event_site = FPoint2::new(borrowed_min.vertex[0], borrowed_min.y_star);
+
+                if site[1] < event_site[1] {
+                    return false;
+                } else if site[1] == event_site[1] && site[0] < event_site[0] {
+                    return false;
+                } else {
+                    return true;
+                }
+            }
+            None => false,
+        }
+    }
+
+    pub fn try_extract_min(&mut self) -> Option<HalfEdgeVertexEventRcCell> {
+        if self.is_empty() {
+            None
+        } else {
+            // bottomとminのup_nextをつなげる。
+            // min->up_nextは親を知らないので、bottomからつなげればいいだけ。
+            let mut bottom = self.bottom.borrow_mut();
+            let min = bottom.up_next.take().unwrap();
+            bottom.up_next = min.borrow_mut().up_next.take();
+
+            Some(min)
         }
     }
 
@@ -552,6 +650,12 @@ impl HalfEdgeVertexEventMap {
             None => maybe_down.borrow_mut().up_next = None,
         }
     }
+
+    pub fn print_all(&self) {
+        self.map.iter().for_each(|(k, v)| {
+            println!("{:?}", (k, v));
+        });
+    }
 }
 
 fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<FPoint2>> {
@@ -594,72 +698,140 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
 
     // Check when inside of voronoi points.
     // sitesを全部通った後にも新しいbpが出来ることがある。
-    while !site_queue.is_empty() {
-        let new_site = site_queue.pop_front().unwrap();
-        println!("");
-        println!("");
-        println!("new_site : {:?}", new_site);
-
-        // Get left half-edge and right half-edge boundary.
-        // either given left or right may be end boundary half-edge.
-        let mut l_boundary = halfedges.get_nearest_left_of(&new_site).unwrap().clone();
-        let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
-        println!("l_boundary : {:?}", l_boundary);
-        println!("r_boundary : {:?}", r_boundary);
-        println!("");
-
-        // Get left end from right boundary if exist, otherwise, just return bottom_site.
-        let bot = match l_boundary.borrow().try_get_edge_end() {
-            Some(bottom) => bottom,
-            None => bottom_site,
+    let mut new_site: Option<FPoint2> = None;
+    while !site_queue.is_empty() || !vertex_events.is_empty() {
+        // Check we should process site event or voronoi vertex event.
+        let is_site_event = if new_site.is_none() {
+            true
+        } else if site_queue.is_empty() {
+            false
+        } else {
+            // Get new vertex event reference if available.
+            let next_site = *site_queue.front().unwrap();
+            !vertex_events.can_process_vertex_event_with(next_site)
         };
-        let site_edge = Edge::new(bot, new_site);
-        let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
 
-        HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
-        println!("u l_boundary : {:?}", l_boundary);
-        println!("n l_halfedge : {:?}", l_halfedge);
-        println!("");
+        //
+        if is_site_event {
+            let site = site_queue.pop_front().unwrap();
+            new_site = Some(site.clone());
 
-        // Check.. to create PQ for bisect.
-        let is_leftbis_intersected = l_boundary
-            .borrow()
-            .try_get_bisect_intersected(&l_halfedge.borrow());
-        if let Some(intersected) = is_leftbis_intersected {
-            println!("lb-lh intersected : {:?}", intersected);
+            println!("");
+            println!("");
+            println!("new_site : {:?}", new_site);
+
+            // Get left half-edge and right half-edge boundary.
+            // either given left or right may be end boundary half-edge.
+            let mut l_boundary = halfedges.get_nearest_left_of(&site).unwrap().clone();
+            let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
+            println!("l_boundary : {:?}", l_boundary);
+            println!("r_boundary : {:?}", r_boundary);
+            println!("");
+
+            // Get left end from right boundary if exist, otherwise, just return bottom_site.
+            let bot = l_boundary
+                .borrow()
+                .try_get_edge_end()
+                .unwrap_or(bottom_site);
+            let site_edge = Edge::new(bot, site);
+            let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
+
+            HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
+            println!("u l_boundary : {:?}", l_boundary);
+            println!("n l_halfedge : {:?}", l_halfedge);
+            println!("");
+
+            // Check.. to create PQ for bisect.
+            let is_leftbis_intersected = l_boundary
+                .borrow()
+                .try_get_bisect_intersected(&l_halfedge.borrow());
+            if let Some(intersected) = is_leftbis_intersected {
+                println!("lb-lh intersected : {:?}", intersected);
+                {
+                    let mut halfedge = l_boundary.borrow_mut();
+                    if halfedge.ve_ref.is_some() {
+                        let ve = halfedge.ve_ref.as_ref().unwrap().clone();
+                        halfedge.ve_ref = None;
+                        vertex_events.delete_halfedge(ve);
+                    }
+                }
+
+                let dist = (intersected - site).magnitude();
+                vertex_events.insert_halfedge(l_boundary.clone(), intersected, dist);
+            };
+
+            // Create reversed but dualed half edge.
+            let ledge = l_halfedge.borrow().clone_edge().unwrap();
+            let r_halfedge = HalfEdge::from_edge_container(ledge, true).into_rccell();
+            HalfEdge::chain_as_right(&mut l_halfedge, r_halfedge.clone());
+            println!("u l_he : {:?}", l_halfedge);
+            println!("n r_he : {:?}", r_halfedge);
+            println!("");
+
+            // Check intersect to create PQ for rev_bisect.
+            let is_bisrev_intersected = r_halfedge
+                .borrow()
+                .try_get_bisect_intersected(&r_boundary.borrow());
+            if let Some(intersected) = is_bisrev_intersected {
+                println!("b-reb intersected : {:?}", intersected);
+
+                let dist = (intersected - site).magnitude();
+                vertex_events.insert_halfedge(r_halfedge.clone(), intersected, dist);
+            };
+        } else {
+            // ここでvertex_eventが空っぽなのかを確認する必要はないかと。
+            let (mut l_bnd, ve_point)  = {
+                let lbnd_ve = vertex_events.try_extract_min().unwrap();
+                let v = lbnd_ve.borrow().vertex;
+                let l = lbnd_ve.borrow().halfedge.clone();
+                (l, v)
+            };
+            let (ll_bnd, mut r_bnd, bot) = {
+                let borrowed_lbnd_he = l_bnd.borrow();
+                (
+                    borrowed_lbnd_he.left_halfedge.as_ref().unwrap().clone(),
+                    borrowed_lbnd_he.right_halfedge.as_ref().unwrap().clone(),
+                    borrowed_lbnd_he.try_get_edge_start().unwrap_or(bottom_site),
+                )
+            };
+            let (rr_bnd, top) = {
+                let borrowed_rbnd_he = r_bnd.borrow();
+                (
+                    borrowed_rbnd_he.right_halfedge.as_ref().unwrap().clone(),
+                    borrowed_rbnd_he.try_get_edge_end().unwrap_or(bottom_site),
+                )
+            };
+
+            // Update voronoi edge start - end points.
+            // Check either l_bnd or r_bnd completes voronoi edge.
             {
-                let mut halfedge = l_boundary.borrow_mut();
-                if halfedge.ve_ref.is_some() {
-                    let ve = halfedge.ve_ref.as_ref().unwrap().clone();
-                    halfedge.ve_ref = None;
-                    vertex_events.delete_halfedge(ve);
+                let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point);
+                if let Some(ve) = ove {
+                    println!("New Voronoi Edge {:?}", ve);
+                }
+            }
+            {
+                let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point);
+                if let Some(ve) = ove {
+                    println!("New Voronoi Edge {:?}", ve);
                 }
             }
 
-            let dist = (intersected - new_site).magnitude();
-            vertex_events.insert_halfedge(l_boundary.clone(), intersected, dist);
-        };
+            // Remove half-edges and vertex-events.
+            halfedges.remove(l_bnd);
+            if let Some(ve) = r_bnd.borrow_mut().ve_ref.take() {
+                vertex_events.delete_halfedge(ve);
+            }
+            halfedges.remove(r_bnd);
 
-        // Create reversed but dualed half edge.
-        let ledge = l_halfedge.borrow().clone_edge().unwrap();
-        let r_halfedge = HalfEdge::from_edge_container(ledge, true).into_rccell();
-        HalfEdge::chain_as_right(&mut l_halfedge, r_halfedge.clone());
-        println!("u l_he : {:?}", l_halfedge);
-        println!("n r_he : {:?}", r_halfedge);
-        println!("");
+            // Create new half-edge, (bottom, top) (maybe inversely by the conditions)
+            // Update voronoi edge into newly created he.
 
-        // Check intersect to create PQ for rev_bisect.
-        let is_bisrev_intersected = r_halfedge
-            .borrow()
-            .try_get_bisect_intersected(&r_boundary.borrow());
-        if let Some(intersected) = is_bisrev_intersected {
-            println!("b-reb intersected : {:?}", intersected);
-
-            let dist = (intersected - new_site).magnitude();
-            vertex_events.insert_halfedge(r_halfedge.clone(), intersected, dist);
-        };
+            // Check and insert new vertex events if can.
+        }
 
         halfedges.print_all();
+        vertex_events.print_all();
     }
 
     let mut cells = Vec::<VoronoiCell>::new();

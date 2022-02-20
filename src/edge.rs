@@ -97,17 +97,17 @@ pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, 
     Some((scaled_ab[0], scaled_ab[1], -1f32 * unscaled_c / factor))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VoronoiEdge {
     None,
-    InfinityFrom(FPoint2),
+    InfFrom(Option<FPoint2>, Option<FPoint2>),
     Closed(Edge),
 }
 
 #[derive(Debug)]
 pub struct EdgeContainer {
     pub site_edge: Edge, // start is bottom, end is top when not reversed.
-    voronoi_edge: VoronoiEdge,
+    pub voronoi_edge: VoronoiEdge,
     pub bisector_pos: FPoint2,
     pub bisector_dir: FVector2,
 }
