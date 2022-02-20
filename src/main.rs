@@ -1,7 +1,7 @@
 #![feature(drain_filter)]
 use ordered_float::OrderedFloat;
 
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{cell::RefCell, collections::{BTreeMap, VecDeque}, rc::Rc};
 
 use itertools::Itertools;
 use nalgebra::{Matrix3, Point2, Point3, Rotation2, Vector2};
@@ -579,11 +579,14 @@ impl VoronoiCell {}
 
 fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
     // Make meta point list which contains triangle & edge meta information.
-    let sites = create_sorted_sites(delaunarys).unwrap();
-    sites.iter().for_each(|t| println!("Sites : {:?}", t));
+    let mut site_queue: VecDeque<_> = {
+        let sites = create_sorted_sites(delaunarys).unwrap();
+        sites.iter().for_each(|t| println!("Sites : {:?}", t));
+        sites.into_iter().collect()
+    };
 
     // Make graph traversing meta_points.
-    let bottom_site = *sites.first().unwrap();
+    let bottom_site = site_queue.pop_front().unwrap();
     println!("bottom_site: {:?}", bottom_site);
 
     let mut halfedges = HalfEdgeMap::new();
@@ -591,14 +594,15 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
 
     // Check when inside of voronoi points.
     // sitesを全部通った後にも新しいbpが出来ることがある。
-    for new_site in sites.iter().skip(1) {
+    while !site_queue.is_empty() {
+        let new_site = site_queue.pop_front().unwrap();
         println!("");
         println!("");
         println!("new_site : {:?}", new_site);
 
         // Get left half-edge and right half-edge boundary.
         // either given left or right may be end boundary half-edge.
-        let mut l_boundary = halfedges.get_nearest_left_of(new_site).unwrap().clone();
+        let mut l_boundary = halfedges.get_nearest_left_of(&new_site).unwrap().clone();
         let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
         println!("l_boundary : {:?}", l_boundary);
         println!("r_boundary : {:?}", r_boundary);
@@ -609,7 +613,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             Some(bottom) => bottom,
             None => bottom_site,
         };
-        let site_edge = Edge::new(bot, *new_site);
+        let site_edge = Edge::new(bot, new_site);
         let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
 
         HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());

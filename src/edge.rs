@@ -88,7 +88,7 @@ pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, 
 
     // offsetのどちらかで除算し、scaleをかけるが
     // xまたはyが0の可能性もあるし、なのでabsした値から大きいもので除算する。
-    let ab = offset.yx().component_mul(&FVector2::new(0f32, -1f32));
+    let ab = offset.yx().component_mul(&FVector2::new(1f32, -1f32));
     let unscaled_c = ab.dot(&(point - FPoint2::origin()));
     let factor = ab[0].abs().max(ab[1].abs());
 
