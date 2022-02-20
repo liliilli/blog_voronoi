@@ -115,7 +115,7 @@ impl HalfEdge {
     pub fn clone_edge(&self) -> Option<EdgeContainerRcCell> {
         match self.edge.as_ref() {
             Some(ec) => Some(ec.clone()),
-            None => None
+            None => None,
         }
     }
 
@@ -162,8 +162,7 @@ impl HalfEdge {
                 if is_right_of_site && self.is_reversed_he == false {
                     println!("is_left_of_bisect : {:?} to {} is true", point, self.id);
                     return Some(true);
-                }
-                else if is_right_of_site == false && self.is_reversed_he {
+                } else if is_right_of_site == false && self.is_reversed_he {
                     println!("is_left_of_bisect : {:?} to {} is false", point, self.id);
                     return Some(false);
                 }
@@ -172,7 +171,10 @@ impl HalfEdge {
                 // 元アルゴリズムではax + by = cだったので、ここでは代わりにnegcを使う。
                 let (ca, cb, cc) = c.try_get_coefficients_of_bisect().unwrap();
                 let negc = -cc;
-                println!("is_left_of_bisect : {:?} to {}x + {}y = {}", point, ca, cb, negc);
+                println!(
+                    "is_left_of_bisect : {:?} to {}x + {}y = {}",
+                    point, ca, cb, negc
+                );
 
                 match c.is_bisect_left_of(point) {
                     Some(v) => Some(match self.is_reversed_he {
@@ -213,7 +215,7 @@ impl HalfEdge {
                 //        false => left_above,
                 //    })
                 //}
-            },
+            }
             None => None,
         }
     }
@@ -249,8 +251,12 @@ impl HalfEdge {
             match self.edge.as_ref() {
                 Some(ec) => {
                     let borrowed = ec.borrow();
-                    (borrowed.site_edge, borrowed.bisector_pos, borrowed.bisector_dir)
-                },
+                    (
+                        borrowed.site_edge,
+                        borrowed.bisector_pos,
+                        borrowed.bisector_dir,
+                    )
+                }
                 None => return None,
             }
         };
@@ -258,8 +264,12 @@ impl HalfEdge {
             match rhs.edge.as_ref() {
                 Some(ec) => {
                     let borrowed = ec.borrow();
-                    (borrowed.site_edge, borrowed.bisector_pos, borrowed.bisector_dir)
-                },
+                    (
+                        borrowed.site_edge,
+                        borrowed.bisector_pos,
+                        borrowed.bisector_dir,
+                    )
+                }
                 None => return None,
             }
         };
@@ -295,8 +305,7 @@ impl HalfEdge {
 
             if le[1] < re[1] || (le[1] == re[1] && le[0] < re[0]) {
                 (self, &lhs_e)
-            }
-            else {
+            } else {
                 (rhs, &rhs_e)
             }
         };
@@ -306,8 +315,7 @@ impl HalfEdge {
             if el.is_reversed_he == false {
                 return None;
             }
-        }
-        else {
+        } else {
             if el.is_reversed_he == true {
                 return None;
             }
@@ -380,10 +388,7 @@ impl HalfEdgeMap {
         let p_most_right = self.most_right.as_ptr();
         let is_most_left = maybe_left.as_ptr() == p_most_left;
         let is_left_of_point = maybe_left.as_ptr() != p_most_right
-            && maybe_left
-                .borrow()
-                .is_bisect_left_of(&site)
-                .unwrap_or(true);
+            && maybe_left.borrow().is_bisect_left_of(&site).unwrap_or(true);
 
         if is_most_left || is_left_of_point {
             loop {
@@ -411,7 +416,10 @@ impl HalfEdgeMap {
                 // leftが本当にsiteの左なら、ループを止めてleftのrightを一番近いleftとしてみなす。
                 // （もうやっているため、上のように別途指定しなくてもいい）
                 if maybe_left.as_ptr() == p_most_left
-                    || maybe_left.borrow().is_bisect_left_of(&site).unwrap_or(false)
+                    || maybe_left
+                        .borrow()
+                        .is_bisect_left_of(&site)
+                        .unwrap_or(false)
                 {
                     break;
                 }
@@ -591,12 +599,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
         // Get left half-edge and right half-edge boundary.
         // either given left or right may be end boundary half-edge.
         let mut l_boundary = halfedges.get_nearest_left_of(new_site).unwrap().clone();
-        let r_boundary = l_boundary
-            .borrow()
-            .right_halfedge
-            .as_ref()
-            .unwrap()
-            .clone();
+        let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
         println!("l_boundary : {:?}", l_boundary);
         println!("r_boundary : {:?}", r_boundary);
         println!("");
