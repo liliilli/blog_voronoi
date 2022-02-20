@@ -1,604 +1,631 @@
 #![feature(drain_filter)]
+use ordered_float::OrderedFloat;
 
-use std::{cell, collections::VecDeque, ops::Index};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use itertools::Itertools;
-use nalgebra::{Matrix3, Point2, Point3, Vector2};
+use nalgebra::{Matrix3, Point2, Point3, Rotation2, Vector2};
 type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
 type FMatrix3 = Matrix3<f32>;
 
-#[derive(Clone, Debug)]
-struct Triangle {
-    pub points: [FPoint2; 3],
+mod edge;
+use edge::{Edge, EdgeContainer, EdgeContainerRcCell, VoronoiEdge};
+
+///
+type HalfEdgeRcCell = Rc<RefCell<HalfEdge>>;
+
+/// KeyタイプはHalfEdgeの概略なx軸位置を示す。
+/// 各Siteの一番近そうなHalfEdgeを取得するため。
+type HalfEdgeBTreeMap = BTreeMap<OrderedFloat<f32>, HalfEdgeRcCell>;
+
+///
+type HalfEdgeVertexEventRcCell = Rc<RefCell<HalfEdgeVertexEvent>>;
+type HalfEdgeVertexEventBTreeMap = BTreeMap<OrderedFloat<f32>, HalfEdgeVertexEventRcCell>;
+
+static mut HE_ID_COUNTER: usize = 0;
+static mut VE_ID_COUNTER: usize = 0;
+
+#[derive(Default)]
+struct HalfEdge {
+    id: usize,
+    left_halfedge: Option<HalfEdgeRcCell>,
+    right_halfedge: Option<HalfEdgeRcCell>,
+    pub edge: Option<EdgeContainerRcCell>,
+    pub is_reversed_he: bool,
+    pub ve_ref: Option<HalfEdgeVertexEventRcCell>,
 }
 
-impl Triangle {
-    pub fn new(first: FPoint2, second: FPoint2, third: FPoint2) -> Self {
-        // まず３つの点が反時計歩行になるように整列する。
-        // 奥の方に進むように…
-        let first3 = FPoint3::new(first[0], 0f32, first[1]);
-        let second3 = FPoint3::new(second[0], 0f32, second[1]);
-        let third3 = FPoint3::new(third[0], 0f32, third[1]);
-
-        let atob = second3 - first3;
-        let btoc = third3 - second3;
-        let normal = atob.cross(&btoc);
-
-        let (a, b, c) = {
-            if normal[1].is_sign_positive() {
-                (second, first, third)
-            } else {
-                (first, second, third)
-            }
+impl std::fmt::Debug for HalfEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Just show left or right is exist.
+        let left_id = match self.left_halfedge.as_ref() {
+            Some(v) => Some(v.borrow().id),
+            None => None,
         };
-
-        Self { points: [a, b, c] }
-    }
-
-    pub fn get_circumcircle(&self) -> Circle {
-        // Using cofactor expansion, get S_x, and S_y, and a.
-        let a = self.a();
-        let b = self.b();
-        let c = self.c();
-        let a_len_2 = (a - FPoint2::origin()).magnitude_squared();
-        let b_len_2 = (b - FPoint2::origin()).magnitude_squared();
-        let c_len_2 = (c - FPoint2::origin()).magnitude_squared();
-
-        let s_x = FMatrix3::new(
-            a_len_2, a[1], 1f32, b_len_2, b[1], 1f32, c_len_2, c[1], 1f32,
-        )
-        .determinant()
-            * 0.5f32;
-
-        let s_y = FMatrix3::new(
-            a[0], a_len_2, 1f32, b[0], b_len_2, 1f32, c[0], c_len_2, 1f32,
-        )
-        .determinant()
-            * 0.5f32;
-
-        let adet =
-            FMatrix3::new(a[0], a[1], 1f32, b[0], b[1], 1f32, c[0], c[1], 1f32).determinant();
-
-        let bdet = FMatrix3::new(
-            a[0], a[1], a_len_2, b[0], b[1], b_len_2, c[0], c[1], c_len_2,
-        )
-        .determinant();
-
-        let s = FPoint2::new(s_x, s_y);
-        let circumcenter = s / adet;
-        let circumradius =
-            ((bdet / adet) + ((s - FPoint2::origin()).magnitude_squared() / adet.powi(2))).sqrt();
-
-        Circle {
-            point: circumcenter,
-            radius: circumradius,
-        }
-    }
-
-    pub fn a(&self) -> FPoint2 {
-        self.points[0]
-    }
-    pub fn b(&self) -> FPoint2 {
-        self.points[1]
-    }
-    pub fn c(&self) -> FPoint2 {
-        self.points[2]
-    }
-
-    pub fn get_edges(&self) -> [Edge; 3] {
-        let a = self.a();
-        let b = self.b();
-        let c = self.c();
-
-        [Edge::new(a, b), Edge::new(b, c), Edge::new(c, a)]
-    }
-
-    pub fn is_including_edge(&self, other: &Edge) -> bool {
-        self.get_edges()
-            .into_iter()
-            .any(|target_edge| target_edge.is_nearly_same(other))
-    }
-
-    pub fn vertices(&self) -> &[FPoint2] {
-        &self.points
-    }
-
-    fn sign(p1: &FPoint2, p2: &FPoint2, p3: &FPoint2) -> f32 {
-        (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
-    }
-
-    pub fn is_including_vertex(&self, other: &FPoint2) -> bool {
-        let vertices = self.vertices();
-        let (d1, d2, d3) = {
-            let d1 = Self::sign(other, &vertices[1], &vertices[0]);
-            let d2 = Self::sign(other, &vertices[2], &vertices[1]);
-            let d3 = Self::sign(other, &vertices[0], &vertices[2]);
-            (d1, d2, d3)
+        let right_id = match self.right_halfedge.as_ref() {
+            Some(v) => Some(v.borrow().id),
+            None => None,
         };
+        let ve_id = match self.ve_ref.as_ref() {
+            Some(ve) => Some(ve.borrow().id),
+            None => None,
+        };
+        let is_boundary = self.edge.is_none();
 
-        //println!("{:?} {d1}, {d2}, {d3}", &vertices);
-        (d1 <= 0f32) && (d2 <= 0f32) && (d3 <= 0f32)
+        f.debug_struct("HE")
+            .field("id", &self.id)
+            .field("boundary", &is_boundary)
+            .field("edge", &self.edge)
+            .field("is_reversed", &self.is_reversed_he)
+            .field("lid", &left_id)
+            .field("rid", &right_id)
+            .field("veid", &ve_id)
+            .finish()
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Circle {
-    pub point: FPoint2,
-    pub radius: f32,
-}
-
-impl Circle {
-    pub fn is_including(&self, point: &FPoint2) -> bool {
-        ((self.point - point).magnitude() - self.radius) <= 0f32
+impl HalfEdge {
+    pub fn default_rccell() -> HalfEdgeRcCell {
+        Rc::new(RefCell::new(Self::new()))
     }
 
-    pub fn get_merged_circle(&self, other: &Self) -> Self {
-        let to_self_offset = self.point - other.point;
-        if !to_self_offset.magnitude_squared().is_normal() {
-            // If point to point is subnormal, just update radius with maximum.
-            Self {
-                point: self.point,
-                radius: self.radius.max(other.radius),
-            }
-        } else {
-            // If direction can be calculated, get most far points between two circles.
-            let to_self_dir = to_self_offset.normalize();
-            let other_far_point = other.point - (to_self_dir * other.radius);
-            let self_far_point = self.point + (to_self_dir * self.radius);
-
-            let new_radius = (self_far_point - other_far_point).magnitude() * 0.5f32;
-            let new_center = other_far_point + (to_self_dir * new_radius);
-            Self {
-                point: new_center,
-                radius: new_radius,
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Edge {
-    pub start: FPoint2,
-    pub end: FPoint2,
-}
-
-impl Edge {
-    pub fn new(start: FPoint2, end: FPoint2) -> Self {
-        Edge { start, end }
+    pub fn into_rccell(self) -> HalfEdgeRcCell {
+        Rc::new(RefCell::new(self))
     }
 
-    pub fn get_offset(&self) -> FVector2 {
-        self.end - self.start
-    }
-
-    pub fn is_nearly_same(&self, other: &Self) -> bool {
-        // startとendが逆の可能性もあるので、それも踏まえてチェックしていく。
-        // 最初はendまでのoffsetで1（並行）か-1(反転)でedgeが同じ位置に位置しているかを確認。
-        let dir = self.get_offset().normalize();
-        let other_dir = other.get_offset().normalize();
-        let cosrad = dir.dot(&other_dir);
-
-        if cosrad >= (1f32 - f32::EPSILON) {
-            // 並行
-            let is_start_nearly_equal =
-                is_nearly_same_fpoint2(self.start, other.start, f32::EPSILON);
-            let is_end_nearly_equal = is_nearly_same_fpoint2(self.end, other.end, f32::EPSILON);
-            return is_start_nearly_equal && is_end_nearly_equal;
-        } else if cosrad <= (-1f32 + f32::EPSILON) {
-            // 反転
-            let is_start_nearly_equal = is_nearly_same_fpoint2(self.start, other.end, f32::EPSILON);
-            let is_end_nearly_equal = is_nearly_same_fpoint2(self.end, other.start, f32::EPSILON);
-            return is_start_nearly_equal && is_end_nearly_equal;
-        }
-
-        false
-    }
-
-    pub fn get_reversed(&self) -> Self {
+    fn new() -> Self {
         Self {
-            start: self.end,
-            end: self.start,
+            id: unsafe {
+                let id = HE_ID_COUNTER;
+                HE_ID_COUNTER += 1;
+                id
+            },
+            ..Default::default()
         }
     }
 
-    pub fn get_center(&self) -> FPoint2 {
-        self.start + ((self.end - self.start) * 0.5f32)
-    }
-}
-
-pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
-    let x = lhs[0] - rhs[0];
-    let y = lhs[1] - rhs[1];
-
-    (x.abs() <= epsilon) && (y.abs() <= epsilon)
-}
-
-fn bowyer_watson(points: &[FPoint2]) -> Option<Vec<Triangle>> {
-    if points.len() <= 2 {
-        return None;
+    pub fn from_edge(edge: &Edge, is_reversed_he: bool) -> Self {
+        Self {
+            id: unsafe {
+                let id = HE_ID_COUNTER;
+                HE_ID_COUNTER += 1;
+                id
+            },
+            edge: Some(EdgeContainer::new(edge).into_rccell()),
+            is_reversed_he,
+            ..Default::default()
+        }
     }
 
-    println!("Inputs : {:?}", points);
+    pub fn from_edge_container(ec: EdgeContainerRcCell, is_reversed_he: bool) -> Self {
+        Self {
+            id: unsafe {
+                let id = HE_ID_COUNTER;
+                HE_ID_COUNTER += 1;
+                id
+            },
+            edge: Some(ec),
+            is_reversed_he,
+            ..Default::default()
+        }
+    }
 
-    // Add super-triangle to triangulation,
-    // which is large enough to completely contain all the points in pointList.
-    let super_triangle = {
-        let mut min = points[0];
-        let mut max = points[0];
-        points.iter().for_each(|p| {
-            min = FPoint2::new(min[0].min(p[0]), min[1].min(p[1]));
-            max = FPoint2::new(max[0].max(p[0]), max[1].max(p[1]));
-        });
+    pub fn clone_edge(&self) -> Option<EdgeContainerRcCell> {
+        match self.edge.as_ref() {
+            Some(ec) => Some(ec.clone()),
+            None => None
+        }
+    }
+
+    pub fn chain_as_right(left: &mut HalfEdgeRcCell, right: HalfEdgeRcCell) {
+        // Get old right from left
+        let left_old_right = match &left.borrow_mut().right_halfedge {
+            Some(or) => Some(or.clone()),
+            None => None,
+        };
+
+        // Connect to each other. (Left->Right)
+        left.borrow_mut().right_halfedge = Some(right.clone());
+
         {
-            let offset = FVector2::new(1e-1, 1e-1);
-            min -= offset;
-            max += offset;
+            // もしRightのLeftがすでにあれば、LeftのRightの連結を解除する。
+            let mut right_mut = right.borrow_mut();
+            match &mut right_mut.left_halfedge {
+                Some(ol) => ol.borrow_mut().right_halfedge = None,
+                _ => (),
+            };
+
+            // Connect to each other. (Right->Left)
+            right_mut.left_halfedge = Some(left.clone());
         }
 
-        let size = max - min;
-        let top = {
-            let offsetx = size[0] * 0.5f32;
-            let offsety = offsetx * 60f32.to_radians().tan();
-            max + FVector2::new(-offsetx, offsety)
-        };
-        let (left, right) = {
-            let offsety = size[1];
-            let offsetx = offsety / 60f32.to_radians().tan();
-            let offset = FVector2::new(offsetx, 0f32);
-            (min - offset, FPoint2::new(max[0], min[1]) + offset)
-        };
+        // もしOld-Rightが存在していれば、
+        // OldRight->left = right, right->right = old-rightにする。
+        if let Some(right_right) = left_old_right {
+            right_right.borrow_mut().left_halfedge = Some(right.clone());
+            right.borrow_mut().right_halfedge = Some(right_right);
+        }
+    }
 
-        Triangle::new(top, left, right)
-    };
-    let mut triangulation: Vec<Triangle> = vec![super_triangle.clone()];
+    pub fn is_left_of_bisect(&self, point: &FPoint2) -> Option<bool> {
+        match &self.edge {
+            Some(container) => {
+                // 単純にbisectから左なのかを計算するのではなく、
+                // reversedかではないかによって特殊に判定を行う必要がある。
+                let c = container.borrow();
+                let is_right_of_site = point[0] > c.site_edge.end[0];
+                if is_right_of_site && self.is_reversed_he == false {
+                    return Some(true);
+                }
+                else if is_right_of_site == false && self.is_reversed_he == true {
+                    return Some(false);
+                }
 
-    for point in points.iter() {
-        // Get bad triangles from triangulation.
-        // Drained traingles from original list will be moved.
-        let bad_triangles = triangulation
-            .drain_filter(|triangle| triangle.get_circumcircle().is_including(point))
-            .collect::<Vec<_>>();
+                c.is_left_of_bisect(point)
+            },
+            None => None,
+        }
+    }
 
-        // Get polygons (valid edges from bad triangels) to check.
-        let mut polygons = vec![];
-        for i in 0..bad_triangles.len() {
-            let source_bad = &bad_triangles[i];
-            let source_edges = source_bad.get_edges();
-            let mut addable_edges = source_edges
-                .to_vec()
-                .drain_filter(|edge| {
-                    bad_triangles
-                        .iter()
-                        .enumerate()
-                        .filter(|(ti, _)| *ti != i)
-                        .any(|(_, target)| target.is_including_edge(edge))
-                        == false
+    pub fn try_get_edge_start(&self) -> Option<FPoint2> {
+        match self.edge.as_ref() {
+            Some(ec) => {
+                let borrowed_ec = ec.borrow();
+                Some(match self.is_reversed_he {
+                    false => borrowed_ec.site_edge.start,
+                    true => borrowed_ec.site_edge.end,
                 })
-                .collect::<Vec<_>>();
-            polygons.append(&mut addable_edges);
-        }
-
-        // re-triangulate the polygonal hole.
-        let mut new_triangles = polygons
-            .into_iter()
-            .filter(|edge| {
-                let to_point = point - edge.start;
-                let to_end = edge.end - edge.start;
-
-                let a2 = to_end.magnitude_squared();
-                let adotb = to_end.dot(&to_point);
-                let reduct = to_point - (to_end * adotb * a2.recip());
-                reduct.magnitude_squared().is_normal()
-            })
-            .map(|edge| Triangle::new(edge.start, edge.end, *point))
-            .collect_vec();
-        triangulation.append(&mut new_triangles);
-    }
-
-    let super_triangle_vertices = super_triangle.vertices();
-    Some(
-        triangulation
-            .into_iter()
-            .filter(|triangle| {
-                super_triangle_vertices
-                    .iter()
-                    .any(|v| triangle.is_including_vertex(v))
-                    == false
-            })
-            .collect_vec(),
-    )
-}
-
-/// 方向性を持たないEdge。
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct IndirectEdge {
-    lhs: FPoint2,
-    rhs: FPoint2,
-}
-
-impl IndirectEdge {
-    pub fn from_edge(edge: &Edge) -> Self {
-        Self::new(&edge.start, &edge.end)
-    }
-
-    pub fn new(one: &FPoint2, two: &FPoint2) -> Self {
-        // one->twoが(-1, 0)方向へ向くようにして入れる。
-        let dir = (two - one).normalize();
-        let left_amount = FVector2::new(-1f32, 0f32).dot(&dir);
-        if left_amount > 0f32 {
-            return Self {
-                lhs: *one,
-                rhs: *two,
-            };
-        } else if left_amount < 0f32 {
-            return Self {
-                lhs: *two,
-                rhs: *one,
-            };
-        }
-
-        // もし90°であれば、下の方向を向くようにする。(0, -1)
-        let down_amount = FVector2::new(0f32, -1f32).dot(&dir);
-        if down_amount >= 0f32 {
-            return Self {
-                lhs: *one,
-                rhs: *two,
-            };
-        } else {
-            return Self {
-                lhs: *two,
-                rhs: *one,
-            };
+            }
+            None => None,
         }
     }
 
-    pub fn get_center(&self) -> FPoint2 {
-        self.lhs + ((self.rhs - self.lhs) * 0.5f32)
-    }
-}
-
-impl std::hash::Hash for IndirectEdge {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let transmute_point = |p: &FPoint2| unsafe {
-            let a = std::mem::transmute::<f32, u32>(p[0]);
-            let b = std::mem::transmute::<f32, u32>(p[1]);
-            (a, b)
-        };
-        let lhs = transmute_point(&self.lhs);
-        let rhs = transmute_point(&self.rhs);
-        lhs.hash(state);
-        rhs.hash(state);
-    }
-}
-
-impl std::cmp::Eq for IndirectEdge {}
-
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
-struct EdgeRef {
-    pub refs: Vec<(usize, usize)>,
-}
-
-impl EdgeRef {
-    pub fn add(&mut self, triangle_i: usize, edge_i: usize) {
-        self.refs.push((triangle_i, edge_i));
-    }
-
-    pub fn is_outside_of_diagram(&self) -> bool {
-        self.refs.len() == 1
-    }
-}
-
-#[derive(Debug, Clone)]
-enum MedialAxis {
-    InEdge(IndirectEdge),
-    OutRay((FPoint2, FVector2)),
-}
-
-impl MedialAxis {
-    pub fn is_inside(&self) -> bool {
-        match self {
-            MedialAxis::InEdge(_) => true,
-            MedialAxis::OutRay(_) => false,
-        }
-    }
-
-    pub fn as_inside(&self) -> Option<&IndirectEdge> {
-        match self {
-            MedialAxis::InEdge(ie) => Some(ie),
-            MedialAxis::OutRay(_) => None,
-        }
-    }
-
-    pub fn as_outside(&self) -> Option<(&FPoint2, &FVector2)> {
-        match self {
-            MedialAxis::InEdge(_) => None,
-            MedialAxis::OutRay((p, d)) => Some((p, d)),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct VoronoiCell {
-    medial_axies: Vec<MedialAxis>,
-}
-
-impl VoronoiCell {
-    pub fn is_medial_contained(&self, other: &MedialAxis) -> bool {
-        if self.medial_axies.is_empty() {
-            return false;
-        }
-
-        match other {
-            MedialAxis::InEdge(ie) => self
-                .medial_axies
-                .iter()
-                .filter(|ma| ma.is_inside())
-                .find(|ma| ma.as_inside().unwrap() == ie)
-                .is_some(),
-            MedialAxis::OutRay((p, d)) => self
-                .medial_axies
-                .iter()
-                .filter(|ma| !ma.is_inside())
-                .find(|ma| {
-                    let (tp, td) = ma.as_outside().unwrap();
-                    tp == p && td == d
+    pub fn try_get_edge_end(&self) -> Option<FPoint2> {
+        match self.edge.as_ref() {
+            Some(ec) => {
+                let borrowed_ec = ec.borrow();
+                Some(match self.is_reversed_he {
+                    true => borrowed_ec.site_edge.start,
+                    false => borrowed_ec.site_edge.end,
                 })
-                .is_some(),
+            }
+            None => None,
         }
     }
 
-    pub fn add_medial_axis(&mut self, medial_axis: MedialAxis) {
-        self.medial_axies.push(medial_axis);
+    pub fn try_get_bisect_intersected(&self, rhs: &Self) -> Option<FPoint2> {
+        let (lhs_e, lbv, lbd) = {
+            match self.edge.as_ref() {
+                Some(ec) => {
+                    let borrowed = ec.borrow();
+                    (borrowed.site_edge, borrowed.bisector_pos, borrowed.bisector_dir)
+                },
+                None => return None,
+            }
+        };
+        let (rhs_e, rbv, rbd) = {
+            match rhs.edge.as_ref() {
+                Some(ec) => {
+                    let borrowed = ec.borrow();
+                    (borrowed.site_edge, borrowed.bisector_pos, borrowed.bisector_dir)
+                },
+                None => return None,
+            }
+        };
+
+        // Check lhs_e and rhs_e has same parent.
+        if lhs_e.end == rhs_e.end {
+            return None;
+        }
+
+        // Check lhs_e and rhs_e is parallel to each other.
+        // 元コードではperp dot productで0に近いかで確認してた。
+        {
+            let lhs_dir = lhs_e.try_get_direction().unwrap();
+            let rhs_dir = rhs_e.try_get_direction().unwrap();
+            if lhs_dir.dot(&rhs_dir).abs() >= (1f32 - f32::EPSILON) {
+                return None;
+            }
+        }
+
+        // その後に計算されるsとtは0..=lhs_lenと0..=rhs_lenの中に入らなければならない。
+        // From real-time rendering, 4th ed.
+        let s = (rbv - lbv).perp(&rbd) / lbd.perp(&rbd);
+        let t = (lbv - rbv).perp(&lbd) / rbd.perp(&lbd);
+        if s.is_finite() == false || t.is_finite() == false {
+            return None;
+        }
+        let intersected = lbv + (lbd * s);
+
+        // もしEdgeのend点が逆なら、ターゲットを逆にする。
+        let (el, e) = {
+            let le = &lhs_e.end;
+            let re = &rhs_e.end;
+
+            if le[1] < re[1] || (le[1] == re[1] && le[0] < re[0]) {
+                (self, &lhs_e)
+            }
+            else {
+                (rhs, &rhs_e)
+            }
+        };
+
+        // Right of site of e?
+        if intersected[0] >= e.end[0] {
+            if el.is_reversed_he == false {
+                return None;
+            }
+        }
+        else {
+            if el.is_reversed_he == true {
+                return None;
+            }
+        }
+
+        Some(intersected)
     }
 }
 
 #[derive(Debug)]
-struct Temporary {
-    pub ti: usize,
-    pub indirect_edges: [IndirectEdge; 3],
-    pub circumcircle_point: FPoint2,
+struct HalfEdgeMap {
+    map: HalfEdgeBTreeMap,
+    most_left: HalfEdgeRcCell,
+    most_right: HalfEdgeRcCell,
 }
 
-fn convert_to_voronoi(delaunarys: &[Triangle]) -> Option<Vec<VoronoiCell>> {
-    // まず三角形のそれぞれのEdgeがどの三角形につながっているかを情報として作る。
-    // Edgeはdelaunarys[0],[1]を持っているなど…
-    // そして三角形のそれぞれのEdgeは逆になっている可能性があるので、
-    // それも踏まえて判別すべき。
-    let mut edge_refs = std::collections::HashMap::new();
-    delaunarys.iter().enumerate().for_each(|(ti, t)| {
-        t.get_edges().into_iter().enumerate().for_each(|(ei, e)| {
-            edge_refs
-                .entry(IndirectEdge::from_edge(&e))
-                .or_insert(EdgeRef::default())
-                .add(ti, ei);
-        })
-    });
+impl HalfEdgeMap {
+    pub fn new() -> Self {
+        let mut map = HalfEdgeBTreeMap::new();
 
-    // Make meta point list which contains triangle & edge meta information.
-    let meta_points = delaunarys
-        .iter()
-        .enumerate()
-        .map(|(ti, t)| Temporary {
-            ti,
-            indirect_edges: {
-                let v = t
-                    .get_edges()
-                    .iter()
-                    .map(|e| IndirectEdge::from_edge(&e))
-                    .collect_vec();
-                [v[0], v[1], v[2]]
-            },
-            circumcircle_point: t.get_circumcircle().point,
-        })
-        .collect_vec();
-    if meta_points.is_empty() {
-        return None;
+        let mut most_left = HalfEdge::default_rccell();
+        let mut most_right = HalfEdge::default_rccell();
+        HalfEdge::chain_as_right(&mut most_left, most_right.clone());
+
+        const MIN_LIMIT: f32 = -5000f32;
+        const MAX_LIMIT: f32 = 5000f32;
+
+        map.insert(OrderedFloat(MIN_LIMIT), most_left.clone());
+        map.insert(OrderedFloat(MAX_LIMIT), most_right.clone());
+
+        Self {
+            map,
+            most_left,
+            most_right,
+        }
     }
-    meta_points.iter().for_each(|t| println!("Output temporary : {:?}", t));
 
-    // Make graph traversing meta_points.
-    let mut cells = Vec::<VoronoiCell>::new();
-    for cursor in &meta_points {
-        // 最初はどこが隣接しているか、どこが外枠なのかを調べる。
-        let (outside, inside): (Vec<_>, Vec<_>) = cursor
-            .indirect_edges
-            .iter()
-            .enumerate()
-            .partition(|(_, ie)| edge_refs.get(ie).unwrap().is_outside_of_diagram());
-        println!("Outside : {:?} || Inside : {:?}", outside, inside);
-
-        let start = cursor.circumcircle_point;
-        let is_start_outside = delaunarys[cursor.ti].is_including_vertex(&start);
-        // voronoi_cellの位置をIndexとして保存する。
-        let mut nearest_cells: [Option<usize>; 3] = [None; 3];
-
-        // まずOutsideから。
-        // Outsideからは自分のcircumcircle_pointとEdgeの中央を向くRayとして構成される。
-        // circumcircle_pointから生成されるボロノイ図の部屋は2D上なら3つしかまで生成されない。
-        outside.into_iter().for_each(|(_, ie)| {
-            let medial_axis = {
-                // ちなみにstartが三角形の中に入っていないこともあるので、
-                // 確認して外側ならdirを逆にする。
-                let to = ie.get_center();
-                let ray_dir = match is_start_outside {
-                    true => (to - start).normalize(),
-                    false => (start - to).normalize(),
-                };
-                MedialAxis::OutRay((start, ray_dir))
-            };
-
-            // 同じmedial_axisを持つcellが存在しているかを見つける。（ここ最適化ポイント）
-            // 外に進むmedial_axisは必ず2つ持つか全く無いか２択なので、判断しやすい。
-            let exist_cells = cells
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.is_medial_contained(&medial_axis));
-            let mut is_exist = false;
-            for (ci, _) in exist_cells {
-                is_exist = true;
-                let slot = nearest_cells.iter_mut().find(|oci| oci.is_none()).unwrap();
-                *slot = Some(ci);
-            }
-            if !is_exist 
-
-                return;
-            }
-
-            // 見つからなかったら、2つ新しく作る、そしてmedial_axisを入れる。
-            {
-                let mut lhs = VoronoiCell::default();
-                lhs.add_medial_axis(medial_axis.clone());
-                cells.push(lhs);
-
-                let slot = nearest_cells.iter_mut().find(|oci| oci.is_none()).unwrap();
-                *slot = Some(cells.len());
-            }
-            {
-                let mut rhs = VoronoiCell::default();
-                rhs.add_medial_axis(medial_axis);
-                cells.push(rhs);
-
-                let slot = nearest_cells.iter_mut().find(|oci| oci.is_none()).unwrap();
-                *slot = Some(cells.len());
+    pub fn print_all(&self) {
+        self.map.iter().for_each(|(k, v)| {
+            println!("{:?}", (k, v));
+            if v.borrow().right_halfedge.is_some() {
+                let mut cursor = v.borrow().right_halfedge.as_ref().unwrap().clone();
+                loop {
+                    println!("Next: {:?}", cursor);
+                    if cursor.borrow().right_halfedge.is_some() {
+                        let next = cursor.borrow().right_halfedge.as_ref().unwrap().clone();
+                        cursor = next;
+                    } else {
+                        break;
+                    }
+                }
             }
         });
-
-
-        inside.into_iter().for_each(|(ei, ie)| {});
     }
 
+    pub fn get_nearest_left_of<'a>(&'a self, site: &FPoint2) -> Option<HalfEdgeRcCell> {
+        if self.map.is_empty() {
+            return None;
+        }
+
+        // 左で近そうなものを取得する。
+        let x = site[0];
+        let mut maybe_left = match self.map.range(..OrderedFloat(x)).next() {
+            Some((_, v)) => v.clone(),
+            None => return None,
+        };
+
+        // 取得したものが本当に左に位置しているかを確認する。
+        let p_most_left = self.most_left.as_ptr();
+        let p_most_right = self.most_right.as_ptr();
+        let is_most_left = maybe_left.as_ptr() == p_most_left;
+        let is_left_of_point = maybe_left.as_ptr() != p_most_right
+            && maybe_left
+                .borrow()
+                .is_left_of_bisect(&site)
+                .unwrap_or(false);
+
+        if is_most_left || is_left_of_point {
+            loop {
+                let right = maybe_left.borrow().right_halfedge.as_ref().unwrap().clone();
+                maybe_left = right;
+
+                // rightが本当にsiteの右なら、ループを止めてrightのleftを一番近いleftとしてみなす。
+                if maybe_left.as_ptr() == p_most_right
+                    || maybe_left
+                        .borrow()
+                        .is_left_of_bisect(&site)
+                        .unwrap_or(false)
+                {
+                    break;
+                }
+            }
+            let left = maybe_left.borrow().left_halfedge.as_ref().unwrap().clone();
+            maybe_left = left;
+        } else {
+            // もしrightの可能性があるなら、leftに進む。
+            loop {
+                let left = maybe_left.borrow().left_halfedge.as_ref().unwrap().clone();
+                maybe_left = left;
+
+                // leftが本当にsiteの左なら、ループを止めてleftのrightを一番近いleftとしてみなす。
+                // （もうやっているため、上のように別途指定しなくてもいい）
+                if maybe_left.as_ptr() == p_most_left
+                    || !maybe_left.borrow().is_left_of_bisect(&site).unwrap_or(true)
+                {
+                    break;
+                }
+            }
+        }
+
+        Some(maybe_left)
+    }
+}
+
+struct HalfEdgeVertexEvent {
+    id: usize,
+    vertex: FPoint2,
+    y_star: f32,
+    halfedge: HalfEdgeRcCell,
+    /// `y_star`または`vertex[0] == x`が上がっていく。
+    up_next: Option<HalfEdgeVertexEventRcCell>,
+}
+
+impl HalfEdgeVertexEvent {
+    pub fn new(he: HalfEdgeRcCell, site: FPoint2, offset: f32) -> Self {
+        Self {
+            id: unsafe {
+                let id = VE_ID_COUNTER;
+                VE_ID_COUNTER += 1;
+                id
+            },
+            vertex: site,
+            y_star: site[1] + offset,
+            halfedge: he,
+            up_next: None,
+        }
+    }
+
+    pub fn into_rccell(self) -> HalfEdgeVertexEventRcCell {
+        Rc::new(RefCell::new(self))
+    }
+}
+
+struct HalfEdgeVertexEventMap {
+    map: HalfEdgeVertexEventBTreeMap,
+    bottom: HalfEdgeVertexEventRcCell,
+}
+
+impl HalfEdgeVertexEventMap {
+    pub fn new() -> Self {
+        Self {
+            map: HalfEdgeVertexEventBTreeMap::new(),
+            bottom: HalfEdgeVertexEvent::new(
+                HalfEdge::default_rccell(),
+                FPoint2::new(0f32, -5000f32),
+                0f32,
+            )
+            .into_rccell(),
+        }
+    }
+
+    /// すでにmapの中に入ってる場合は考慮しない。
+    pub fn insert_halfedge(&mut self, he: HalfEdgeRcCell, site: FPoint2, offset: f32) {
+        let ve = HalfEdgeVertexEvent::new(he.clone(), site, offset);
+
+        // `y`のkeyを計算する。
+        let key = ve.y_star;
+
+        // veよりyまたはxが大きいEventを探す。
+        // もしマップに何もなければ、何もしない。(`None`のまま)
+        let vecell = ve.into_rccell();
+        if self.map.is_empty() {
+            self.bottom.borrow_mut().up_next = Some(vecell.clone());
+            he.borrow_mut().ve_ref = Some(vecell.clone());
+            self.map.insert(OrderedFloat(key), vecell);
+
+            return;
+        }
+
+        // 条件に合うlast(maybe_down)を探す。(veより手前下)
+        let mut maybe_down = match self.map.range(..OrderedFloat(key)).next() {
+            Some((_, v)) => v.clone(),
+            None => self.bottom.clone(),
+        };
+        if maybe_down.borrow().up_next.is_some() {
+            loop {
+                let next = maybe_down.borrow().up_next.as_ref().unwrap().clone();
+                let (next_y_star, vertex_x) = {
+                    let bor_next = next.borrow();
+                    (bor_next.y_star, bor_next.vertex[0])
+                };
+                if key > next_y_star || (key == next_y_star && site[0] > vertex_x) {
+                    maybe_down = next;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // veのnextとmaybe_downのnextを再構築する。
+        if let Some(next) = maybe_down.borrow().up_next.as_ref() {
+            vecell.borrow_mut().up_next = Some(next.clone());
+        }
+
+        maybe_down.borrow_mut().up_next = Some(vecell.clone());
+        he.borrow_mut().ve_ref = Some(vecell.clone());
+        self.map.insert(OrderedFloat(key), vecell);
+    }
+
+    pub fn delete_halfedge(&mut self, he: HalfEdgeVertexEventRcCell) {
+        let key = he.borrow().y_star;
+
+        // 条件に合うlast(maybe_down)を探す。(veより手前下)
+        let mut maybe_down = match self.map.range(..OrderedFloat(key)).next() {
+            Some((_, v)) => v.clone(),
+            None => self.bottom.clone(),
+        };
+        assert!(maybe_down.borrow().up_next.is_some());
+
+        let p_he = he.as_ptr();
+        loop {
+            let p_down_next = maybe_down.borrow().up_next.as_ref().unwrap().as_ptr();
+            if p_down_next != p_he {
+                let next = maybe_down.borrow().up_next.as_ref().unwrap().clone();
+                maybe_down = next;
+            } else {
+                break;
+            }
+        }
+
+        self.map.remove(&OrderedFloat(key));
+        match &he.borrow().up_next {
+            Some(next) => maybe_down.borrow_mut().up_next = Some(next.clone()),
+            None => maybe_down.borrow_mut().up_next = None,
+        }
+    }
+}
+
+fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<FPoint2>> {
+    // Make meta point list which contains triangle & edge meta information.
+    let mut sites = delaunarys.iter().map(|p| *p).collect_vec();
+    if sites.is_empty() {
+        return None;
+    }
+
+    // 最初一番大きいyを持つポイントを最初に、そして大きいxを持つポイントを優先するようにソートする。
+    sites.sort_by(|a, b| {
+        use std::cmp::Ordering;
+        match a[1].partial_cmp(&b[1]).unwrap() {
+            Ordering::Equal => a[0].partial_cmp(&b[1]).unwrap(),
+            y => y,
+        }
+    });
+    Some(sites)
+}
+
+#[derive(Debug, Default)]
+struct VoronoiCell {}
+
+impl VoronoiCell {}
+
+fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
+    // Make meta point list which contains triangle & edge meta information.
+    let sites = create_sorted_sites(delaunarys).unwrap();
+    sites.iter().for_each(|t| println!("Sites : {:?}", t));
+
+    // Make graph traversing meta_points.
+    let bottom_site = *sites.first().unwrap();
+    println!("bottom_site: {:?}", bottom_site);
+
+    let mut halfedges = HalfEdgeMap::new();
+    let mut vertex_events = HalfEdgeVertexEventMap::new();
+
+    // Check when inside of voronoi points.
+    // sitesを全部通った後にも新しいbpが出来ることがある。
+    for new_site in sites.iter().skip(1) {
+        println!("");
+        println!("");
+        println!("new_site : {:?}", new_site);
+
+        // Get left half-edge and right half-edge boundary.
+        // either given left or right may be end boundary half-edge.
+        let mut l_boundary = halfedges.get_nearest_left_of(new_site).unwrap().clone();
+        let r_boundary = l_boundary
+            .borrow()
+            .right_halfedge
+            .as_ref()
+            .unwrap()
+            .clone();
+        println!("l_boundary : {:?}", l_boundary);
+        println!("r_boundary : {:?}", r_boundary);
+        println!("");
+
+        // Get left end from right boundary if exist, otherwise, just return bottom_site.
+        let bot = match l_boundary.borrow().try_get_edge_end() {
+            Some(bottom) => bottom,
+            None => bottom_site,
+        };
+        let site_edge = Edge::new(bot, *new_site);
+        let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
+
+        HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
+        println!("u l_boundary : {:?}", l_boundary);
+        println!("n l_halfedge : {:?}", l_halfedge);
+        println!("");
+
+        // Check.. to create PQ for bisect.
+        let is_leftbis_intersected = l_boundary
+            .borrow()
+            .try_get_bisect_intersected(&l_halfedge.borrow());
+        if let Some(intersected) = is_leftbis_intersected {
+            println!("lb-lh intersected : {:?}", intersected);
+            {
+                let mut halfedge = l_boundary.borrow_mut();
+                if halfedge.ve_ref.is_some() {
+                    let ve = halfedge.ve_ref.as_ref().unwrap().clone();
+                    halfedge.ve_ref = None;
+                    vertex_events.delete_halfedge(ve);
+                }
+            }
+
+            let dist = (intersected - new_site).magnitude();
+            vertex_events.insert_halfedge(l_boundary.clone(), intersected, dist);
+        };
+
+        // Create reversed but dualed half edge.
+        let ledge = l_halfedge.borrow().clone_edge().unwrap();
+        let r_halfedge = HalfEdge::from_edge_container(ledge, true).into_rccell();
+        HalfEdge::chain_as_right(&mut l_halfedge, r_halfedge.clone());
+        println!("u l_he : {:?}", l_halfedge);
+        println!("n r_he : {:?}", r_halfedge);
+        println!("");
+
+        // Check intersect to create PQ for rev_bisect.
+        let is_bisrev_intersected = r_halfedge
+            .borrow()
+            .try_get_bisect_intersected(&r_boundary.borrow());
+        if let Some(intersected) = is_bisrev_intersected {
+            println!("b-reb intersected : {:?}", intersected);
+
+            let dist = (intersected - new_site).magnitude();
+            vertex_events.insert_halfedge(r_halfedge.clone(), intersected, dist);
+        };
+
+        halfedges.print_all();
+    }
+
+    let mut cells = Vec::<VoronoiCell>::new();
     Some(cells)
 }
 
 fn main() {
-    let triangles = bowyer_watson(&[
+    let points = [
         FPoint2::new(1f32, 0f32),
         FPoint2::new(-1f32, 0f32),
         FPoint2::new(1f32, 2f32),
         FPoint2::new(-1f32, 2f32),
-    ])
-    .unwrap();
-    triangles
-        .iter()
-        .for_each(|triangle| println!("Output triangle : {:?}", triangle));
+        //FPoint2::new(13.9f32, 6.76f32),
+        //FPoint2::new(12.7f32, 10.6f32),
+        //FPoint2::new(8.7f32, 7.7f32),
+        //FPoint2::new(7.1f32, 4.24f32),
+        //FPoint2::new(4.6f32, 11.44f32),
+    ];
 
-    // Filter.
-    triangles
-        .iter()
-        .map(|t| t.get_circumcircle())
-        .unique_by(|c| unsafe {
-            let p = &c.point;
-            let ua = std::mem::transmute::<f32, u32>(p[0]);
-            let ub = std::mem::transmute::<f32, u32>(p[1]);
-            let ur = std::mem::transmute::<f32, u32>(c.radius);
-            (ua, ub, ur)
-        })
-        .collect_vec()
-        .iter()
-        .for_each(|c| println!("Output circumcircle : {:?}", c));
-
-    let cells = convert_to_voronoi(&triangles).unwrap();
+    // Dual
+    let cells = convert_to_voronoi(&points).unwrap();
     cells.iter().for_each(|c| println!("Output cell : {:?}", c));
+
+    //new_halfedge_map().into_iter().for_each(|v| println!("{:?}", v));
 }
