@@ -149,21 +149,70 @@ impl HalfEdge {
         }
     }
 
-    pub fn is_left_of_bisect(&self, point: &FPoint2) -> Option<bool> {
+    pub fn is_bisect_left_of(&self, point: &FPoint2) -> Option<bool> {
         match &self.edge {
             Some(container) => {
                 // 単純にbisectから左なのかを計算するのではなく、
                 // reversedかではないかによって特殊に判定を行う必要がある。
                 let c = container.borrow();
-                let is_right_of_site = point[0] > c.site_edge.end[0];
+                let topsite = &c.site_edge.end;
+                //let bottom = &c.site_edge.start;
+
+                let is_right_of_site = point[0] > topsite[0];
                 if is_right_of_site && self.is_reversed_he == false {
+                    println!("is_left_of_bisect : {:?} to {} is true", point, self.id);
                     return Some(true);
                 }
-                else if is_right_of_site == false && self.is_reversed_he == true {
+                else if is_right_of_site == false && self.is_reversed_he {
+                    println!("is_left_of_bisect : {:?} to {} is false", point, self.id);
                     return Some(false);
                 }
 
-                c.is_left_of_bisect(point)
+                // ax + by + c = 0として返す。
+                // 元アルゴリズムではax + by = cだったので、ここでは代わりにnegcを使う。
+                let (ca, cb, cc) = c.try_get_coefficients_of_bisect().unwrap();
+                let negc = -cc;
+                println!("is_left_of_bisect : {:?} to {}x + {}y = {}", point, ca, cb, negc);
+
+                match c.is_bisect_left_of(point) {
+                    Some(v) => Some(match self.is_reversed_he {
+                        true => !v,
+                        false => v,
+                    }),
+                    None => None,
+                }
+
+                // もしa == 0であれば（またはsubnormal）別ロジックを使う。
+                // example) by = -cで、xはどんな値でもOK.
+                //if ca.is_normal() == false {
+                //    println!("subnormal!");
+                //    let yl = negc - (ca * point[0]);
+                //    let t1 = point[1] - yl;
+                //    let t2 = point[0] - topsite[0];
+                //    let t3 = yl - topsite[1];
+
+                //    let left_above = (t1 * t1) > (t2 * t2 + t3 * t3);
+                //    Some(match self.is_reversed_he {
+                //        true => !left_above,
+                //        false => left_above,
+                //    })
+                //}
+                //else {
+                //    println!("normal!");
+                //    let dp = point - topsite; // (dxp, dyp)
+                //    let dxs = topsite[0] - bottom[0];
+
+                //    let mut left_above = (cb * (dp[0] * dp[0] - dp[1] * dp[1])) <
+                //        (dxs * dp[1] * (1f32 + 2f32 * dp[0] / dxs + cb * cb));
+                //    if cb < 0f32 {
+                //        left_above = (left_above == false);
+                //    }
+
+                //    Some(match self.is_reversed_he {
+                //        true => !left_above,
+                //        false => left_above,
+                //    })
+                //}
             },
             None => None,
         }
@@ -333,8 +382,8 @@ impl HalfEdgeMap {
         let is_left_of_point = maybe_left.as_ptr() != p_most_right
             && maybe_left
                 .borrow()
-                .is_left_of_bisect(&site)
-                .unwrap_or(false);
+                .is_bisect_left_of(&site)
+                .unwrap_or(true);
 
         if is_most_left || is_left_of_point {
             loop {
@@ -343,9 +392,9 @@ impl HalfEdgeMap {
 
                 // rightが本当にsiteの右なら、ループを止めてrightのleftを一番近いleftとしてみなす。
                 if maybe_left.as_ptr() == p_most_right
-                    || maybe_left
+                    || !maybe_left
                         .borrow()
-                        .is_left_of_bisect(&site)
+                        .is_bisect_left_of(&site)
                         .unwrap_or(false)
                 {
                     break;
@@ -362,7 +411,7 @@ impl HalfEdgeMap {
                 // leftが本当にsiteの左なら、ループを止めてleftのrightを一番近いleftとしてみなす。
                 // （もうやっているため、上のように別途指定しなくてもいい）
                 if maybe_left.as_ptr() == p_most_left
-                    || !maybe_left.borrow().is_left_of_bisect(&site).unwrap_or(true)
+                    || maybe_left.borrow().is_bisect_left_of(&site).unwrap_or(false)
                 {
                     break;
                 }

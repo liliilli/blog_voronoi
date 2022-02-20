@@ -81,18 +81,19 @@ impl Edge {
 pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, f32, f32)> {
     // もしoffsetが0に近い場合には、coefficientが取れない。
     // またoffsetはyの符号を変える。
-    let offset = offset.component_mul(&FVector2::new(1f32, -1f32));
+    //let offset = //offset.component_mul(&FVector2::new(1f32, 1f32));
     if offset.magnitude_squared() < f32::EPSILON {
         return None;
     }
 
     // offsetのどちらかで除算し、scaleをかけるが
     // xまたはyが0の可能性もあるし、なのでabsした値から大きいもので除算する。
-    let unscaled_c = offset.dot(&(point - FPoint2::origin()));
-    let factor = offset[0].abs().max(offset[1].abs());
+    let ab = offset.yx().component_mul(&FVector2::new(0f32, -1f32));
+    let unscaled_c = ab.dot(&(point - FPoint2::origin()));
+    let factor = ab[0].abs().max(ab[1].abs());
 
     // scaleして返す。
-    let scaled_ab = offset.scale(factor);
+    let scaled_ab = ab.scale(factor.recip());
     Some((scaled_ab[0], scaled_ab[1], -1f32 * unscaled_c / factor))
 }
 
@@ -165,7 +166,7 @@ impl EdgeContainer {
         Rc::new(RefCell::new(self))
     }
 
-    pub fn is_left_of_bisect(&self, point: &FPoint2) -> Option<bool> {
+    pub fn is_bisect_left_of(&self, point: &FPoint2) -> Option<bool> {
         let bc = self.bisector_pos;
         let bd = self.bisector_dir;
 
@@ -173,8 +174,16 @@ impl EdgeContainer {
         // If distance is positive, bisector is left side of point.
         // If distance is 0, point is on the bisector.
         match try_get_coefficients(&bd, &bc) {
-            Some((a, b, c)) => Some(((a * point[0]) + (b * point[1]) + c) < 0f32),
+            Some((a, b, c)) => Some(((a * point[0]) + (b * point[1]) + c) > 0f32),
             None => None,
         }
+    }
+
+    pub fn try_get_coefficients_of_bisect(&self) -> Option<(f32, f32, f32)> {
+        let bc = self.bisector_pos;
+        let bd = self.bisector_dir;
+        print!("bc: {:?}, bd: {:?}", bc, bd);
+
+        try_get_coefficients(&bd, &bc)
     }
 }
