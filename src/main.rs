@@ -359,6 +359,30 @@ impl HalfEdge {
             None => None,
         }
     }
+
+    pub fn try_get_voronoi_edge(&self, min_boundary: FPoint2, max_boundary: FPoint2) -> Option<Edge> {
+        let (mut p1, mut p2) = {
+            let ec = self.edge.as_ref().unwrap();
+            let borrowed_ec = ec.borrow();
+
+            (borrowed_ec.site_edge.start, borrowed_ec.site_edge.end)
+        };
+
+        let (s1, s2) = {
+            let ec = self.edge.as_ref().unwrap();
+            let borrowed_ec = ec.borrow();
+
+            let (a, b, _) = borrowed_ec.site_edge.try_get_coefficients().unwrap();
+            match borrowed_ec.voronoi_edge {
+                VoronoiEdge::InfFrom(s, e) => {
+                    
+                },
+                _ => unreachable!(),
+            }
+        };
+
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -481,6 +505,13 @@ impl HalfEdgeMap {
 
         he.left_halfedge.take();
         he.right_halfedge.take();
+    }
+
+    pub fn visit_all<'a>(&'a self, func: &dyn Fn(std::cell::Ref<'a, HalfEdge>)) {
+        self.map.iter().for_each(|(_, ref_he)| {
+            let borrow_he = ref_he.borrow();
+            func(borrow_he);
+        })
     }
 }
 
@@ -835,13 +866,13 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             {
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?}", ve);
                 }
             }
             {
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?}", ve);
                 }
             }
 
@@ -870,7 +901,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             {
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?}", ve);
                 }
             }
 
@@ -899,6 +930,16 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
         halfedges.print_all();
         vertex_events.print_all();
     }
+
+    // 最後に完結していないVoronoi-edgeを吐き出す。
+    // Half-edgeと１つのveの点を使って無限またはバウンダリーまで伸ばす。
+    halfedges.visit_all(&|he| {
+        let min_border = FPoint2::new(-100f32, -100f32);
+        let max_border = FPoint2::new(100f32, 100f32);
+        if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
+            println!("New Voronoi Edge (Opened) {:?}", ve);
+        }
+    });
 
     let mut cells = Vec::<VoronoiCell>::new();
     Some(cells)
