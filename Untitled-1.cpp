@@ -933,12 +933,12 @@ void VoronoiDiagramGenerator::clip_line(struct Edge* e)
 	pymin = borderMinY;
 	pymax = borderMaxY;
 
-	if (e->a == 1.0 && e->b >= 0.0)
+	if (e->a == 1.0 && e->b >= 0.0) // x = cの場合。
 	{
 		s1 = e->pPoint[1];
 		s2 = e->pPoint[0];
 	}
-	else
+	else // 多分これを特殊ケースとしてしなければ
 	{
 		s1 = e->pPoint[0];
 		s2 = e->pPoint[1];
@@ -995,7 +995,7 @@ void VoronoiDiagramGenerator::clip_line(struct Edge* e)
 			y2 = (e->c - x2) / e->b;
 		};
 	}
-	else
+	else // y = cの場合。
 	{
 		x1 = pxmin;
 		if (s1 != nullptr && s1->coord.x > pxmin)
