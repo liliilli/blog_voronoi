@@ -326,8 +326,9 @@ impl HalfEdge {
         Some(intersected)
     }
 
-    pub fn update_voronoi_edge(&mut self, point: FPoint2) -> Option<Edge> {
-        let is_reversed_he = self.is_reversed_he;
+    pub fn update_voronoi_edge(&mut self, point: FPoint2, reversed: bool) -> Option<Edge> {
+        // tt => f, tf = t, ff => f, ft => t.
+        let is_reversed_he = self.is_reversed_he ^ reversed;
         match self.edge.as_mut() {
             Some(ec) => {
                 let mut mut_ec = ec.borrow_mut();
@@ -463,6 +464,24 @@ impl HalfEdgeMap {
 
         Some(maybe_left)
     }
+
+    pub fn remove(&mut self, he: HalfEdgeRcCell) {
+        // If left_halfedge is exist, 
+        // we need to re-chain lhe->rhe = he.rhe.
+        let mut he = he.borrow_mut();
+
+        let rhe_cloned = he.right_halfedge.clone();
+        let lhe_cloned = he.left_halfedge.clone();
+        if let Some(lhe) = he.left_halfedge.as_mut() {
+            lhe.borrow_mut().right_halfedge = rhe_cloned;
+        }
+        if let Some(rhe) = he.right_halfedge.as_mut() {
+            rhe.borrow_mut().left_halfedge = lhe_cloned;
+        }
+
+        he.left_halfedge.take();
+        he.right_halfedge.take();
+    }
 }
 
 struct HalfEdgeVertexEvent {
@@ -491,10 +510,6 @@ impl HalfEdgeVertexEvent {
 
     pub fn into_rccell(self) -> HalfEdgeVertexEventRcCell {
         Rc::new(RefCell::new(self))
-    }
-
-    pub fn update_voronoi_edge(&mut self, point: FPoint2) -> Option<Edge> {
-        self.halfedge.borrow_mut().update_voronoi_edge(point)
     }
 }
 
@@ -567,9 +582,11 @@ impl HalfEdgeVertexEventMap {
         } else {
             // bottomとminのup_nextをつなげる。
             // min->up_nextは親を知らないので、bottomからつなげればいいだけ。
-            let mut bottom = self.bottom.borrow_mut();
-            let min = bottom.up_next.take().unwrap();
-            bottom.up_next = min.borrow_mut().up_next.take();
+            let min = self.bottom.borrow_mut().up_next.as_ref().unwrap().clone();
+            //bottom.up_next = min.borrow_mut().up_next.take();
+
+            // minはまだ削除されていないので、btree-mapから削除する
+            self.delete_halfedge(min.clone());
 
             Some(min)
         }
@@ -652,6 +669,7 @@ impl HalfEdgeVertexEventMap {
     }
 
     pub fn print_all(&self) {
+        println!("{:?}", (-1, &self.bottom));
         self.map.iter().for_each(|(k, v)| {
             println!("{:?}", (k, v));
         });
@@ -786,7 +804,12 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                 let l = lbnd_ve.borrow().halfedge.clone();
                 (l, v)
             };
-            let (ll_bnd, mut r_bnd, bot) = {
+            println!("");
+            println!("");
+            println!("new vertex event : {}", ve_point);
+            vertex_events.print_all();
+
+            let (mut ll_bnd, mut r_bnd, bot) = {
                 let borrowed_lbnd_he = l_bnd.borrow();
                 (
                     borrowed_lbnd_he.left_halfedge.as_ref().unwrap().clone(),
@@ -801,17 +824,22 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                     borrowed_rbnd_he.try_get_edge_end().unwrap_or(bottom_site),
                 )
             };
+            println!("lbnd : {:?}", l_bnd);
+            println!("llbnd : {:?}", ll_bnd);
+            println!("rbnd : {:?}", r_bnd);
+            println!("rrbnd : {:?}", rr_bnd);
+            println!("");
 
             // Update voronoi edge start - end points.
             // Check either l_bnd or r_bnd completes voronoi edge.
             {
-                let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point);
+                let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     println!("New Voronoi Edge {:?}", ve);
                 }
             }
             {
-                let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point);
+                let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     println!("New Voronoi Edge {:?}", ve);
                 }
@@ -826,8 +854,46 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
 
             // Create new half-edge, (bottom, top) (maybe inversely by the conditions)
             // Update voronoi edge into newly created he.
+            let (bot, top, is_reversed) = if bot[1] > top[1] {
+                (top, bot, true)
+            } else {
+                (bot, top, false)
+            };
+            let site_edge = Edge::new(bot, top);
+            let mut new_he = HalfEdge::from_edge(&site_edge, is_reversed).into_rccell();
+
+            HalfEdge::chain_as_right(&mut ll_bnd, new_he.clone());
+            println!("u ll_boundary : {:?}", ll_bnd);
+            println!("n new_halfedge : {:?}", new_he);
+            println!("");
+
+            {
+                let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
+                if let Some(ve) = ove {
+                    println!("New Voronoi Edge {:?}", ve);
+                }
+            }
 
             // Check and insert new vertex events if can.
+            let is_llhe_nhe_intersected = ll_bnd
+                .borrow()
+                .try_get_bisect_intersected(&new_he.borrow());
+            if let Some(intersected) = is_llhe_nhe_intersected {
+                println!("ll-new intersected : {:?}", intersected);
+
+                let dist = (intersected - bot).magnitude();
+                vertex_events.insert_halfedge(ll_bnd.clone(), intersected, dist);
+            };
+
+            let is_nhe_rrhe_intersected = new_he
+                .borrow()
+                .try_get_bisect_intersected(&rr_bnd.borrow());
+            if let Some(intersected) = is_nhe_rrhe_intersected {
+                println!("new-rr intersected : {:?}", intersected);
+
+                let dist = (intersected - bot).magnitude();
+                vertex_events.insert_halfedge(new_he.clone(), intersected, dist);
+            };
         }
 
         halfedges.print_all();
