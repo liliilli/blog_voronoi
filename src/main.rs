@@ -532,6 +532,66 @@ impl HalfEdgeMap {
         });
     }
 
+    pub fn check_validation(&self) {
+        if self.map.is_empty() {
+            return;
+        }
+
+        // Check from start to end using right_halfedge.
+        let mut cursor = match self.most_left.borrow().right_halfedge.as_ref() {
+            Some(right) => right.clone(),
+            None => return,
+        };
+        if cursor.borrow().edge.is_none() {
+            return;
+        }
+
+        let mut next_start_site = {
+            let borrowed_cursor = cursor.borrow();
+            let is_reversed_he = borrowed_cursor.is_reversed_he;
+            let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge;
+
+            match is_reversed_he {
+                true => site_edge.end,
+                false => site_edge.start,
+            }
+        };
+        let goal_site = next_start_site;
+
+        loop 
+        {
+            if cursor.borrow().edge.is_none() { // Is most-right?
+                break;
+            }
+
+            let (start, end) = {
+                let borrowed_cursor = cursor.borrow();
+                let is_reversed_he = borrowed_cursor.is_reversed_he;
+                let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge;
+
+                match is_reversed_he {
+                    false => {
+                        (site_edge.start, site_edge.end)
+                    },
+                    true => {
+                        (site_edge.end, site_edge.start)
+                    },
+                }
+            };
+
+            assert!(start == next_start_site);
+            next_start_site = end;
+
+            // Update cursor to right next.
+            {
+                let next = cursor.borrow().right_halfedge.as_ref().unwrap().clone();
+                cursor = next;
+            }
+        }
+
+        assert!(next_start_site == goal_site);
+    }
+
     pub fn get_nearest_left_of<'a>(&'a self, site: &FPoint2) -> Option<HalfEdgeRcCell> {
         if self.map.is_empty() {
             return None;
@@ -852,12 +912,7 @@ fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<FPoint2>> {
     Some(sites)
 }
 
-#[derive(Debug, Default)]
-struct VoronoiCell {}
-
-impl VoronoiCell {}
-
-fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
+fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
     // Make meta point list which contains triangle & edge meta information.
     let mut site_queue: VecDeque<_> = {
         let sites = create_sorted_sites(delaunarys).unwrap();
@@ -871,6 +926,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
 
     let mut halfedges = HalfEdgeMap::new();
     let mut vertex_events = HalfEdgeVertexEventMap::new();
+    let mut voronoi_edges = Rc::new(RefCell::new(Vec::<Edge>::new()));
 
     // Check when inside of voronoi points.
     // sitesを全部通った後にも新しいbpが出来ることがある。
@@ -964,7 +1020,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             };
             println!("");
             println!("");
-            println!("new vertex event : {}", ve_point);
+            println!("new vertex event : {}, {:?}", ve_point, l_bnd);
             vertex_events.print_all();
 
             let (mut ll_bnd, mut r_bnd, bot) = {
@@ -994,12 +1050,14 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     println!("New Voronoi Edge (Closed) {:?}", ve);
+                    voronoi_edges.borrow_mut().push(ve);
                 }
             }
             {
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     println!("New Voronoi Edge (Closed) {:?}", ve);
+                    voronoi_edges.borrow_mut().push(ve);
                 }
             }
 
@@ -1029,6 +1087,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
                     println!("New Voronoi Edge (Closed) {:?}", ve);
+                    voronoi_edges.borrow_mut().push(ve);
                 }
             }
 
@@ -1038,6 +1097,14 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                 .try_get_bisect_intersected(&new_he.borrow());
             if let Some(intersected) = is_llhe_nhe_intersected {
                 println!("ll-new intersected : {:?}", intersected);
+                {
+                    let mut halfedge = ll_bnd.borrow_mut();
+                    if halfedge.ve_ref.is_some() {
+                        let ve = halfedge.ve_ref.as_ref().unwrap().clone();
+                        halfedge.ve_ref = None;
+                        vertex_events.delete_halfedge(ve);
+                    }
+                }
 
                 let dist = (intersected - bot).magnitude();
                 vertex_events.insert_halfedge(ll_bnd.clone(), intersected, dist);
@@ -1054,12 +1121,17 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             };
         }
 
-        halfedges.print_all();
-        vertex_events.print_all();
+        //halfedges.print_all();
+        //vertex_events.print_all();
+
+        // Check all half-edges are closed loop.
+        // If not, assert because half-edge loop is invalid.
+        halfedges.check_validation();
     }
 
     // 最後に完結していないVoronoi-edgeを吐き出す。
     // Half-edgeと１つのveの点を使って無限またはバウンダリーまで伸ばす。
+    let opened_ves = voronoi_edges.clone();
     halfedges.visit_all(&|he| {
         let min_border = FPoint2::new(-100f32, -100f32);
         let max_border = FPoint2::new(100f32, 100f32);
@@ -1070,11 +1142,15 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
         //println!("for he : {:?}", he);
         if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
             println!("New Voronoi Edge (Opened) {:?}", ve);
+            opened_ves.borrow_mut().push(ve);
         }
     });
 
-    let mut cells = Vec::<VoronoiCell>::new();
-    Some(cells)
+    let results = {
+        let mut_ves = voronoi_edges.borrow_mut();
+        mut_ves.iter().map(|&e| e).collect_vec()
+    };
+    Some(results)
 }
 
 fn main() {
@@ -1090,9 +1166,7 @@ fn main() {
         FPoint2::new(4.6f32, 11.44f32),
     ];
 
-    // Dual
-    let cells = convert_to_voronoi(&points).unwrap();
-    cells.iter().for_each(|c| println!("Output cell : {:?}", c));
-
-    //new_halfedge_map().into_iter().for_each(|v| println!("{:?}", v));
+    // Voronoi edges using fortune's sweepline algorithm.
+    let voronoi_edges = convert_to_voronoi(&points).unwrap();
+    voronoi_edges.iter().enumerate().for_each(|(i, c)| println!("{:3}, Output edges : {:?}", i, c));
 }
