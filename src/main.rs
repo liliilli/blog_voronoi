@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, VecDeque, HashSet},
     rc::Rc,
 };
 
@@ -162,10 +162,10 @@ impl HalfEdge {
 
                 let is_right_of_site = point[0] > topsite[0];
                 if is_right_of_site && self.is_reversed_he == false {
-                    println!("is_left_of_bisect : {:?} to {} is true", point, self.id);
+                    //println!("is_left_of_bisect : {:?} to {} is true", point, self.id);
                     return Some(true);
                 } else if is_right_of_site == false && self.is_reversed_he {
-                    println!("is_left_of_bisect : {:?} to {} is false", point, self.id);
+                    //println!("is_left_of_bisect : {:?} to {} is false", point, self.id);
                     return Some(false);
                 }
 
@@ -173,10 +173,10 @@ impl HalfEdge {
                 // 元アルゴリズムではax + by = cだったので、ここでは代わりにnegcを使う。
                 let (ca, cb, cc) = c.try_get_coefficients_of_bisect().unwrap();
                 let negc = -cc;
-                println!(
-                    "is_left_of_bisect : {:?} to {}x + {}y = {}",
-                    point, ca, cb, negc
-                );
+                //println!(
+                //    "is_left_of_bisect : {:?} to {}x + {}y = {}",
+                //    point, ca, cb, negc
+                //);
 
                 match c.is_bisect_left_of(point) {
                     Some(v) => Some(match self.is_reversed_he {
@@ -368,20 +368,121 @@ impl HalfEdge {
             (borrowed_ec.site_edge.start, borrowed_ec.site_edge.end)
         };
 
+        let (a, b, c) = {
+            let ec = self.edge.as_ref().unwrap();
+            let borrowed_ec = ec.borrow();
+            borrowed_ec.try_get_coefficients_of_bisect().unwrap()
+        };
+        if a.is_normal() == false && b.is_normal() == false {
+            return None;
+        }
+
         let (s1, s2) = {
             let ec = self.edge.as_ref().unwrap();
             let borrowed_ec = ec.borrow();
-
-            let (a, b, _) = borrowed_ec.site_edge.try_get_coefficients().unwrap();
             match borrowed_ec.voronoi_edge {
                 VoronoiEdge::InfFrom(s, e) => {
-                    
+                    (s.clone(), e.clone())
                 },
                 _ => unreachable!(),
             }
         };
 
-        None
+        // Get a line.
+        if b.is_normal() //a.is_subnormal()
+        {
+            p1 = {
+                let mut x = min_boundary[0];
+                if let Some(p) = s1 {
+                    if p[0] > min_boundary[0]  {
+                        x = p[0];
+                    }
+                }
+                let x = x.clamp(min_boundary[0], max_boundary[0]);
+                let y = ((a * x) + c) / b * -1f32;
+                FPoint2::new(x, y)
+            };
+            p2 = {
+                let mut x = max_boundary[0];
+                if let Some(p) = s2 {
+                    if p[0] < max_boundary[0] {
+                        x = p[0];
+                    }
+                }
+                let x = x.clamp(min_boundary[0], max_boundary[0]);
+                let y = ((a * x) + c) / b * -1f32;
+                FPoint2::new(x, y)
+            };
+
+            // Check updated (p1, p2) is out of bound.
+            let (miny, maxy) = (min_boundary[1], max_boundary[1]);
+            if (p1[1] > maxy && p2[1] > maxy) || (p1[1] < miny && p2[1] < miny)
+            {
+                return None;
+            }
+
+            // Clip by y1->x1, and y2->x2.
+            // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
+            let p1y_clipped = p1[1].clamp(miny, maxy);
+            if p1y_clipped != p1[1] {
+                let x = ((b * p1y_clipped) + c) / a * -1f32;
+                p1 = FPoint2::new(x, p1y_clipped);
+            }
+
+            let p2y_clipped = p2[1].clamp(miny, maxy);
+            if p2y_clipped != p2[1] {
+                let x = ((b * p2y_clipped) + c) / a * -1f32;
+                p2 = FPoint2::new(x, p2y_clipped);
+            }
+        }
+        else if a.is_normal()
+        {
+            p1 = {
+                let mut y = min_boundary[1];
+                if let Some(p) = s1 {
+                    if p[1] > min_boundary[1]  {
+                        y = p[1];
+                    }
+                }
+                let y = y.clamp(min_boundary[1], max_boundary[1]);
+                let x = ((b * y) + c) / a * -1f32;
+                FPoint2::new(x, y)
+            };
+            p2 = {
+                let mut y = min_boundary[1];
+                if let Some(p) = s2 {
+                    if p[1] < max_boundary[1]  {
+                        y = p[1];
+                    }
+                }
+                let y = y.clamp(min_boundary[1], max_boundary[1]);
+                let x = ((b * y) + c) / a * -1f32;
+                FPoint2::new(x, y)
+            };
+
+            // Check updated (p1, p2) is out of bound.
+            let (minx, maxx) = (min_boundary[0], max_boundary[0]);
+            if (p1[0] > maxx && p2[0] > maxx) || (p1[0] < minx && p2[0] < minx)
+            {
+                return None;
+            }
+
+            // Clip by x1->y1, and x2->y2.
+            // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
+            let p1x_clipped = p1[0].clamp(minx, maxx);
+            if p1x_clipped != p1[0] {
+                let y = ((a * p1x_clipped) + c) / b * -1f32;
+                p1 = FPoint2::new(p1x_clipped, y);
+            }
+
+            let p2x_clipped = p2[0].clamp(minx, maxx);
+            if p2x_clipped != p2[0] {
+                let y = ((a * p2x_clipped) + c) / b * -1f32;
+                p2 = FPoint2::new(p2x_clipped, y);
+            }
+        }
+
+        Some(Edge::new(p1, p2))
     }
 }
 
@@ -507,10 +608,36 @@ impl HalfEdgeMap {
         he.right_halfedge.take();
     }
 
-    pub fn visit_all<'a>(&'a self, func: &dyn Fn(std::cell::Ref<'a, HalfEdge>)) {
+    pub fn visit_all<'a>(&'a self, func: &dyn Fn(std::cell::Ref<'_, HalfEdge>)) {
+        let mut visited_id_set: HashSet<usize> = std::collections::HashSet::new();
+
         self.map.iter().for_each(|(_, ref_he)| {
-            let borrow_he = ref_he.borrow();
-            func(borrow_he);
+            // Check this he is visited using id.
+            let mut he = ref_he.clone();
+
+            // If not visited yet, visit it.
+            {
+                let borrow_he = he.borrow();
+                if !visited_id_set.contains(&borrow_he.id) {
+                    visited_id_set.insert(borrow_he.id);
+                    func(borrow_he);
+                }
+            }
+
+            loop {
+                // iterate chained right half-edges to end and visit if not visited.
+                let next = match he.borrow().right_halfedge.as_ref() {
+                    Some(next) => next.clone(),
+                    None => break,
+                };
+                he = next;
+
+                let borrow_he = he.borrow();
+                if !visited_id_set.contains(&borrow_he.id) {
+                    visited_id_set.insert(borrow_he.id);
+                    func(borrow_he);
+                }
+            }
         })
     }
 }
@@ -773,8 +900,8 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             // either given left or right may be end boundary half-edge.
             let mut l_boundary = halfedges.get_nearest_left_of(&site).unwrap().clone();
             let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
-            println!("l_boundary : {:?}", l_boundary);
-            println!("r_boundary : {:?}", r_boundary);
+            println!("l_bd : {:?}", l_boundary);
+            println!("r_bd : {:?}", r_boundary);
             println!("");
 
             // Get left end from right boundary if exist, otherwise, just return bottom_site.
@@ -786,8 +913,8 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
 
             HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
-            println!("u l_boundary : {:?}", l_boundary);
-            println!("n l_halfedge : {:?}", l_halfedge);
+            println!("u l_bd : {:?}", l_boundary);
+            println!("n l_he : {:?}", l_halfedge);
             println!("");
 
             // Check.. to create PQ for bisect.
@@ -855,11 +982,11 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
                     borrowed_rbnd_he.try_get_edge_end().unwrap_or(bottom_site),
                 )
             };
-            println!("lbnd : {:?}", l_bnd);
-            println!("llbnd : {:?}", ll_bnd);
-            println!("rbnd : {:?}", r_bnd);
-            println!("rrbnd : {:?}", rr_bnd);
-            println!("");
+            //println!("lbnd : {:?}", l_bnd);
+            //println!("llbnd : {:?}", ll_bnd);
+            //println!("rbnd : {:?}", r_bnd);
+            //println!("rrbnd : {:?}", rr_bnd);
+            //println!("");
 
             // Update voronoi edge start - end points.
             // Check either l_bnd or r_bnd completes voronoi edge.
@@ -894,9 +1021,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
             let mut new_he = HalfEdge::from_edge(&site_edge, is_reversed).into_rccell();
 
             HalfEdge::chain_as_right(&mut ll_bnd, new_he.clone());
-            println!("u ll_boundary : {:?}", ll_bnd);
-            println!("n new_halfedge : {:?}", new_he);
-            println!("");
+            //println!("u ll_boundary : {:?}", ll_bnd);
+            //println!("n new_halfedge : {:?}", new_he);
+            //println!("");
 
             {
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
@@ -936,6 +1063,11 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<VoronoiCell>> {
     halfedges.visit_all(&|he| {
         let min_border = FPoint2::new(-100f32, -100f32);
         let max_border = FPoint2::new(100f32, 100f32);
+        if he.edge.is_none() {
+            return;
+        }
+
+        //println!("for he : {:?}", he);
         if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
             println!("New Voronoi Edge (Opened) {:?}", ve);
         }
@@ -951,11 +1083,11 @@ fn main() {
         FPoint2::new(-1f32, 0f32),
         FPoint2::new(1f32, 2f32),
         FPoint2::new(-1f32, 2f32),
-        //FPoint2::new(13.9f32, 6.76f32),
-        //FPoint2::new(12.7f32, 10.6f32),
-        //FPoint2::new(8.7f32, 7.7f32),
-        //FPoint2::new(7.1f32, 4.24f32),
-        //FPoint2::new(4.6f32, 11.44f32),
+        FPoint2::new(13.9f32, 6.76f32),
+        FPoint2::new(12.7f32, 10.6f32),
+        FPoint2::new(8.7f32, 7.7f32),
+        FPoint2::new(7.1f32, 4.24f32),
+        FPoint2::new(4.6f32, 11.44f32),
     ];
 
     // Dual

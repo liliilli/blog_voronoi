@@ -182,7 +182,7 @@ impl EdgeContainer {
     pub fn try_get_coefficients_of_bisect(&self) -> Option<(f32, f32, f32)> {
         let bc = self.bisector_pos;
         let bd = self.bisector_dir;
-        print!("bc: {:?}, bd: {:?}", bc, bd);
+        //print!("bc: {:?}, bd: {:?}", bc, bd);
 
         try_get_coefficients(&bd, &bc)
     }
