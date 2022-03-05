@@ -1,6 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
-use nalgebra::{Point3, Rotation2, Vector2};
+use nalgebra::{Point2, Point3, Rotation2, Vector2};
+type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
 
