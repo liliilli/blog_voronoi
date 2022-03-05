@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, VecDeque, HashSet},
+    collections::{BTreeMap, HashSet, VecDeque},
     rc::Rc,
 };
 
@@ -13,7 +13,9 @@ type FPoint2 = Point2<f32>;
 type FVector2 = Vector2<f32>;
 
 mod edge;
-use edge::{Edge, EdgeContainer, EdgeContainerRcCell, VoronoiEdge};
+use edge::{Edge, EdgeContainer, EdgeContainerRcCell, Site, SiteRcCell, VoronoiEdge};
+
+use crate::edge::SiteEdge;
 
 ///
 type HalfEdgeRcCell = Rc<RefCell<HalfEdge>>;
@@ -88,7 +90,7 @@ impl HalfEdge {
         }
     }
 
-    pub fn from_edge(edge: &Edge, is_reversed_he: bool) -> Self {
+    pub fn from_edge(edge: SiteEdge, is_reversed_he: bool) -> Self {
         Self {
             id: unsafe {
                 let id = HE_ID_COUNTER;
@@ -151,13 +153,13 @@ impl HalfEdge {
         }
     }
 
-    pub fn is_bisect_left_of(&self, point: &FPoint2) -> Option<bool> {
+    pub fn is_bisect_left_of(&self, point: FPoint2) -> Option<bool> {
         match &self.edge {
             Some(container) => {
                 // 単純にbisectから左なのかを計算するのではなく、
                 // reversedかではないかによって特殊に判定を行う必要がある。
                 let c = container.borrow();
-                let topsite = &c.site_edge.end;
+                let topsite = c.site_edge.end_point();
 
                 let is_right_of_site = point[0] > topsite[0];
                 if is_right_of_site && !self.is_reversed_he {
@@ -166,7 +168,7 @@ impl HalfEdge {
                     return Some(false);
                 }
 
-                match c.is_bisect_left_of(point) {
+                match c.is_bisect_left_of(&point) {
                     Some(v) => Some(match self.is_reversed_he {
                         true => !v,
                         false => v,
@@ -178,26 +180,26 @@ impl HalfEdge {
         }
     }
 
-    pub fn try_get_edge_start(&self) -> Option<FPoint2> {
+    pub fn try_get_edge_start(&self) -> Option<SiteRcCell> {
         match self.edge.as_ref() {
             Some(ec) => {
                 let borrowed_ec = ec.borrow();
                 Some(match self.is_reversed_he {
-                    false => borrowed_ec.site_edge.start,
-                    true => borrowed_ec.site_edge.end,
+                    false => borrowed_ec.site_edge.clone_start(),
+                    true => borrowed_ec.site_edge.clone_end(),
                 })
             }
             None => None,
         }
     }
 
-    pub fn try_get_edge_end(&self) -> Option<FPoint2> {
+    pub fn try_get_edge_end(&self) -> Option<SiteRcCell> {
         match self.edge.as_ref() {
             Some(ec) => {
                 let borrowed_ec = ec.borrow();
                 Some(match self.is_reversed_he {
-                    true => borrowed_ec.site_edge.start,
-                    false => borrowed_ec.site_edge.end,
+                    true => borrowed_ec.site_edge.clone_start(),
+                    false => borrowed_ec.site_edge.clone_end(),
                 })
             }
             None => None,
@@ -210,7 +212,7 @@ impl HalfEdge {
                 Some(ec) => {
                     let borrowed = ec.borrow();
                     (
-                        borrowed.site_edge,
+                        borrowed.site_edge.clone(),
                         borrowed.bisector_pos,
                         borrowed.bisector_dir,
                     )
@@ -223,7 +225,7 @@ impl HalfEdge {
                 Some(ec) => {
                     let borrowed = ec.borrow();
                     (
-                        borrowed.site_edge,
+                        borrowed.site_edge.clone(),
                         borrowed.bisector_pos,
                         borrowed.bisector_dir,
                     )
@@ -233,7 +235,7 @@ impl HalfEdge {
         };
 
         // Check lhs_e and rhs_e has same parent.
-        if lhs_e.end == rhs_e.end {
+        if lhs_e.end_point() == rhs_e.end_point() {
             return None;
         }
 
@@ -258,8 +260,8 @@ impl HalfEdge {
 
         // もしEdgeのend点が逆なら、ターゲットを逆にする。
         let (el, e) = {
-            let le = &lhs_e.end;
-            let re = &rhs_e.end;
+            let le = &lhs_e.end_point();
+            let re = &rhs_e.end_point();
 
             if le[1] < re[1] || (le[1] == re[1] && le[0] < re[0]) {
                 (self, &lhs_e)
@@ -269,7 +271,7 @@ impl HalfEdge {
         };
 
         // Right of site of e?
-        if intersected[0] >= e.end[0] {
+        if intersected[0] >= e.end_point()[0] {
             if !el.is_reversed_he {
                 return None;
             }
@@ -316,12 +318,19 @@ impl HalfEdge {
         }
     }
 
-    pub fn try_get_voronoi_edge(&self, min_boundary: FPoint2, max_boundary: FPoint2) -> Option<Edge> {
+    pub fn try_get_voronoi_edge(
+        &self,
+        min_boundary: FPoint2,
+        max_boundary: FPoint2,
+    ) -> Option<Edge> {
         let (mut p1, mut p2) = {
             let ec = self.edge.as_ref().unwrap();
             let borrowed_ec = ec.borrow();
 
-            (borrowed_ec.site_edge.start, borrowed_ec.site_edge.end)
+            (
+                borrowed_ec.site_edge.start_point(),
+                borrowed_ec.site_edge.end_point(),
+            )
         };
 
         let (a, b, c) = {
@@ -337,20 +346,19 @@ impl HalfEdge {
             let ec = self.edge.as_ref().unwrap();
             let borrowed_ec = ec.borrow();
             match borrowed_ec.voronoi_edge {
-                VoronoiEdge::InfFrom(s, e) => {
-                    (s.clone(), e.clone())
-                },
+                VoronoiEdge::InfFrom(s, e) => (s.clone(), e.clone()),
                 _ => unreachable!(),
             }
         };
 
         // Get a line.
-        if b.is_normal() //a.is_subnormal()
+        if b.abs() > f32::EPSILON
+        //a.is_subnormal()
         {
             p1 = {
                 let mut x = min_boundary[0];
                 if let Some(p) = s1 {
-                    if p[0] > min_boundary[0]  {
+                    if p[0] > min_boundary[0] {
                         x = p[0];
                     }
                 }
@@ -372,8 +380,7 @@ impl HalfEdge {
 
             // Check updated (p1, p2) is out of bound.
             let (miny, maxy) = (min_boundary[1], max_boundary[1]);
-            if (p1[1] > maxy && p2[1] > maxy) || (p1[1] < miny && p2[1] < miny)
-            {
+            if (p1[1] > maxy && p2[1] > maxy) || (p1[1] < miny && p2[1] < miny) {
                 return None;
             }
 
@@ -390,24 +397,24 @@ impl HalfEdge {
                 let x = ((b * p2y_clipped) + c) / a * -1f32;
                 p2 = FPoint2::new(x, p2y_clipped);
             }
-        }
-        else if a.is_normal()
-        {
+        } else if a.abs() > f32::EPSILON {
             p1 = {
                 let mut y = min_boundary[1];
                 if let Some(p) = s1 {
-                    if p[1] > min_boundary[1]  {
+                    if p[1] > min_boundary[1] {
                         y = p[1];
                     }
                 }
+                dbg!(y);
                 let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
+                dbg!(x, y);
                 FPoint2::new(x, y)
             };
             p2 = {
                 let mut y = min_boundary[1];
                 if let Some(p) = s2 {
-                    if p[1] < max_boundary[1]  {
+                    if p[1] < max_boundary[1] {
                         y = p[1];
                     }
                 }
@@ -418,8 +425,7 @@ impl HalfEdge {
 
             // Check updated (p1, p2) is out of bound.
             let (minx, maxx) = (min_boundary[0], max_boundary[0]);
-            if (p1[0] > maxx && p2[0] > maxx) || (p1[0] < minx && p2[0] < minx)
-            {
+            if (p1[0] > maxx && p2[0] > maxx) || (p1[0] < minx && p2[0] < minx) {
                 return None;
             }
 
@@ -439,6 +445,16 @@ impl HalfEdge {
         }
 
         Some(Edge::new(p1, p2))
+    }
+
+    pub fn push_edge_to_sites(&mut self, ve: Edge) {
+        match self.edge.as_mut() {
+            Some(ec) => {
+                let mut mut_ec = ec.borrow_mut();
+                mut_ec.site_edge.insert_edge(ve);
+            }
+            _ => (),
+        }
     }
 }
 
@@ -505,33 +521,29 @@ impl HalfEdgeMap {
         let mut next_start_site = {
             let borrowed_cursor = cursor.borrow();
             let is_reversed_he = borrowed_cursor.is_reversed_he;
-            let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge;
+            let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge.clone();
 
             match is_reversed_he {
-                true => site_edge.end,
-                false => site_edge.start,
+                true => site_edge.end_point(),
+                false => site_edge.start_point(),
             }
         };
         let goal_site = next_start_site;
 
-        loop 
-        {
-            if cursor.borrow().edge.is_none() { // Is most-right?
+        loop {
+            if cursor.borrow().edge.is_none() {
+                // Is most-right?
                 break;
             }
 
             let (start, end) = {
                 let borrowed_cursor = cursor.borrow();
                 let is_reversed_he = borrowed_cursor.is_reversed_he;
-                let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge;
+                let site_edge = borrowed_cursor.edge.as_ref().unwrap().borrow().site_edge.clone();
 
                 match is_reversed_he {
-                    false => {
-                        (site_edge.start, site_edge.end)
-                    },
-                    true => {
-                        (site_edge.end, site_edge.start)
-                    },
+                    false => (site_edge.start_point(), site_edge.end_point()),
+                    true => (site_edge.end_point(), site_edge.start_point()),
                 }
             };
 
@@ -548,7 +560,7 @@ impl HalfEdgeMap {
         assert!(next_start_site == goal_site);
     }
 
-    pub fn get_nearest_left_of<'a>(&'a self, site: &FPoint2) -> Option<HalfEdgeRcCell> {
+    pub fn get_nearest_left_of<'a>(&'a self, site: FPoint2) -> Option<HalfEdgeRcCell> {
         if self.map.is_empty() {
             return None;
         }
@@ -565,7 +577,7 @@ impl HalfEdgeMap {
         let p_most_right = self.most_right.as_ptr();
         let is_most_left = maybe_left.as_ptr() == p_most_left;
         let is_left_of_point = maybe_left.as_ptr() != p_most_right
-            && maybe_left.borrow().is_bisect_left_of(&site).unwrap_or(true);
+            && maybe_left.borrow().is_bisect_left_of(site).unwrap_or(true);
 
         if is_most_left || is_left_of_point {
             loop {
@@ -574,10 +586,7 @@ impl HalfEdgeMap {
 
                 // rightが本当にsiteの右なら、ループを止めてrightのleftを一番近いleftとしてみなす。
                 if maybe_left.as_ptr() == p_most_right
-                    || !maybe_left
-                        .borrow()
-                        .is_bisect_left_of(&site)
-                        .unwrap_or(false)
+                    || !maybe_left.borrow().is_bisect_left_of(site).unwrap_or(false)
                 {
                     break;
                 }
@@ -593,10 +602,7 @@ impl HalfEdgeMap {
                 // leftが本当にsiteの左なら、ループを止めてleftのrightを一番近いleftとしてみなす。
                 // （もうやっているため、上のように別途指定しなくてもいい）
                 if maybe_left.as_ptr() == p_most_left
-                    || maybe_left
-                        .borrow()
-                        .is_bisect_left_of(&site)
-                        .unwrap_or(false)
+                    || maybe_left.borrow().is_bisect_left_of(site).unwrap_or(false)
                 {
                     break;
                 }
@@ -607,7 +613,7 @@ impl HalfEdgeMap {
     }
 
     pub fn remove(&mut self, he: HalfEdgeRcCell) {
-        // If left_halfedge is exist, 
+        // If left_halfedge is exist,
         // we need to re-chain lhe->rhe = he.rhe.
         let mut he = he.borrow_mut();
 
@@ -624,7 +630,7 @@ impl HalfEdgeMap {
         he.right_halfedge.take();
     }
 
-    pub fn visit_all<'a>(&'a self, func: &dyn Fn(std::cell::Ref<'_, HalfEdge>)) {
+    pub fn visit_all<'a>(&'a self, func: &dyn Fn(std::cell::RefMut<'_, HalfEdge>)) {
         let mut visited_id_set: HashSet<usize> = std::collections::HashSet::new();
 
         self.map.iter().for_each(|(_, ref_he)| {
@@ -633,7 +639,7 @@ impl HalfEdgeMap {
 
             // If not visited yet, visit it.
             {
-                let borrow_he = he.borrow();
+                let borrow_he = he.borrow_mut();
                 if !visited_id_set.contains(&borrow_he.id) {
                     visited_id_set.insert(borrow_he.id);
                     func(borrow_he);
@@ -648,7 +654,7 @@ impl HalfEdgeMap {
                 };
                 he = next;
 
-                let borrow_he = he.borrow();
+                let borrow_he = he.borrow_mut();
                 if !visited_id_set.contains(&borrow_he.id) {
                     visited_id_set.insert(borrow_he.id);
                     func(borrow_he);
@@ -850,9 +856,12 @@ impl HalfEdgeVertexEventMap {
     }
 }
 
-fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<FPoint2>> {
+fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<SiteRcCell>> {
     // Make meta point list which contains triangle & edge meta information.
-    let mut sites = delaunarys.iter().map(|p| *p).collect_vec();
+    let mut sites = delaunarys
+        .iter()
+        .map(|p| Site::from_point(*p).into_rccell())
+        .collect_vec();
     if sites.is_empty() {
         return None;
     }
@@ -860,33 +869,33 @@ fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<FPoint2>> {
     // 最初一番大きいyを持つポイントを最初に、そして大きいxを持つポイントを優先するようにソートする。
     sites.sort_by(|a, b| {
         use std::cmp::Ordering;
-        match a[1].partial_cmp(&b[1]).unwrap() {
-            Ordering::Equal => a[0].partial_cmp(&b[1]).unwrap(),
+        let ap = a.borrow().point;
+        let bp = b.borrow().point;
+
+        match ap[1].partial_cmp(&bp[1]).unwrap() {
+            Ordering::Equal => ap[0].partial_cmp(&bp[1]).unwrap(),
             y => y,
         }
     });
     Some(sites)
 }
 
-fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
+fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCell>)> {
     // Make meta point list which contains triangle & edge meta information.
+    let sites = create_sorted_sites(delaunarys).unwrap();
     let mut site_queue: VecDeque<_> = {
-        let sites = create_sorted_sites(delaunarys).unwrap();
         sites.iter().for_each(|t| println!("Sites : {:?}", t));
-        sites.into_iter().collect()
+        sites.iter().map(|s| s.clone()).collect()
     };
 
-    // Make graph traversing meta_points.
     let bottom_site = site_queue.pop_front().unwrap();
-    println!("bottom_site: {:?}", bottom_site);
-
     let mut halfedges = HalfEdgeMap::new();
     let mut vertex_events = HalfEdgeVertexEventMap::new();
     let voronoi_edges = Rc::new(RefCell::new(Vec::<Edge>::new()));
 
     // Check when inside of voronoi points.
     // sitesを全部通った後にも新しいbpが出来ることがある。
-    let mut new_site: Option<FPoint2> = None;
+    let mut new_site: Option<SiteRcCell> = None;
     while !site_queue.is_empty() || !vertex_events.is_empty() {
         // Check we should process site event or voronoi vertex event.
         let is_site_event = if new_site.is_none() {
@@ -895,39 +904,40 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             false
         } else {
             // Get new vertex event reference if available.
-            let next_site = *site_queue.front().unwrap();
-            !vertex_events.can_process_vertex_event_with(next_site)
+            let next_site_point = site_queue.front().unwrap().borrow().point;
+            !vertex_events.can_process_vertex_event_with(next_site_point)
         };
 
         //
         if is_site_event {
             let site = site_queue.pop_front().unwrap();
+            let site_point = site.borrow().point;
             new_site = Some(site.clone());
 
-            println!("");
-            println!("");
-            println!("new_site : {:?}", new_site);
+            //println!("");
+            //println!("");
+            //println!("new_site : {:?}", new_site);
 
             // Get left half-edge and right half-edge boundary.
             // either given left or right may be end boundary half-edge.
-            let mut l_boundary = halfedges.get_nearest_left_of(&site).unwrap().clone();
+            let mut l_boundary = halfedges.get_nearest_left_of(site_point).unwrap().clone();
             let r_boundary = l_boundary.borrow().right_halfedge.as_ref().unwrap().clone();
-            println!("l_bd : {:?}", l_boundary);
-            println!("r_bd : {:?}", r_boundary);
-            println!("");
+            //println!("l_bd : {:?}", l_boundary);
+            //println!("r_bd : {:?}", r_boundary);
+            //println!("");
 
             // Get left end from right boundary if exist, otherwise, just return bottom_site.
             let bot = l_boundary
                 .borrow()
                 .try_get_edge_end()
-                .unwrap_or(bottom_site);
-            let site_edge = Edge::new(bot, site);
-            let mut l_halfedge = HalfEdge::from_edge(&site_edge, false).into_rccell();
+                .unwrap_or(bottom_site.clone());
+            let mut l_halfedge =
+                HalfEdge::from_edge(SiteEdge::new(bot, site.clone()), false).into_rccell();
 
             HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
-            println!("u l_bd : {:?}", l_boundary);
-            println!("n l_he : {:?}", l_halfedge);
-            println!("");
+            //println!("u l_bd : {:?}", l_boundary);
+            //println!("n l_he : {:?}", l_halfedge);
+            //println!("");
 
             // Check.. to create PQ for bisect.
             let is_leftbis_intersected = l_boundary
@@ -944,7 +954,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
                     }
                 }
 
-                let dist = (intersected - site).magnitude();
+                let dist = (intersected - site_point).magnitude();
                 vertex_events.insert_halfedge(l_boundary.clone(), intersected, dist);
             };
 
@@ -963,12 +973,12 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             if let Some(intersected) = is_bisrev_intersected {
                 println!("b-reb intersected : {:?}", intersected);
 
-                let dist = (intersected - site).magnitude();
+                let dist = (intersected - site_point).magnitude();
                 vertex_events.insert_halfedge(r_halfedge.clone(), intersected, dist);
             };
         } else {
             // ここでvertex_eventが空っぽなのかを確認する必要はないかと。
-            let (l_bnd, ve_point)  = {
+            let (l_bnd, ve_point) = {
                 let lbnd_ve = vertex_events.try_extract_min().unwrap();
                 let v = lbnd_ve.borrow().vertex;
                 let l = lbnd_ve.borrow().halfedge.clone();
@@ -984,14 +994,18 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
                 (
                     borrowed_lbnd_he.left_halfedge.as_ref().unwrap().clone(),
                     borrowed_lbnd_he.right_halfedge.as_ref().unwrap().clone(),
-                    borrowed_lbnd_he.try_get_edge_start().unwrap_or(bottom_site),
+                    borrowed_lbnd_he
+                        .try_get_edge_start()
+                        .unwrap_or(bottom_site.clone()),
                 )
             };
             let (rr_bnd, top) = {
                 let borrowed_rbnd_he = r_bnd.borrow();
                 (
                     borrowed_rbnd_he.right_halfedge.as_ref().unwrap().clone(),
-                    borrowed_rbnd_he.try_get_edge_end().unwrap_or(bottom_site),
+                    borrowed_rbnd_he
+                        .try_get_edge_end()
+                        .unwrap_or(bottom_site.clone()),
                 )
             };
             //println!("lbnd : {:?}", l_bnd);
@@ -1005,14 +1019,16 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             {
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, l_bnd);
+                    l_bnd.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
             {
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, r_bnd);
+                    r_bnd.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -1026,13 +1042,19 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
 
             // Create new half-edge, (bottom, top) (maybe inversely by the conditions)
             // Update voronoi edge into newly created he.
-            let (bot, top, is_reversed) = if bot[1] > top[1] {
-                (top, bot, true)
-            } else {
-                (bot, top, false)
+            let (bot, top, is_reversed) = {
+                let bot_point = bot.borrow().point;
+                let top_point = top.borrow().point;
+                if bot_point[1] > top_point[1] {
+                    (top, bot, true)
+                } else {
+                    (bot, top, false)
+                }
             };
-            let site_edge = Edge::new(bot, top);
-            let mut new_he = HalfEdge::from_edge(&site_edge, is_reversed).into_rccell();
+            let bot_point = bot.borrow().point;
+            let top_point = top.borrow().point;
+            let mut new_he =
+                HalfEdge::from_edge(SiteEdge::new(bot, top), is_reversed).into_rccell();
 
             HalfEdge::chain_as_right(&mut ll_bnd, new_he.clone());
             //println!("u ll_boundary : {:?}", ll_bnd);
@@ -1042,15 +1064,15 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             {
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?}", ve);
+                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, new_he);
+                    new_he.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
 
             // Check and insert new vertex events if can.
-            let is_llhe_nhe_intersected = ll_bnd
-                .borrow()
-                .try_get_bisect_intersected(&new_he.borrow());
+            let is_llhe_nhe_intersected =
+                ll_bnd.borrow().try_get_bisect_intersected(&new_he.borrow());
             if let Some(intersected) = is_llhe_nhe_intersected {
                 println!("ll-new intersected : {:?}", intersected);
                 {
@@ -1062,17 +1084,16 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
                     }
                 }
 
-                let dist = (intersected - bot).magnitude();
+                let dist = (intersected - bot_point).magnitude();
                 vertex_events.insert_halfedge(ll_bnd.clone(), intersected, dist);
             };
 
-            let is_nhe_rrhe_intersected = new_he
-                .borrow()
-                .try_get_bisect_intersected(&rr_bnd.borrow());
+            let is_nhe_rrhe_intersected =
+                new_he.borrow().try_get_bisect_intersected(&rr_bnd.borrow());
             if let Some(intersected) = is_nhe_rrhe_intersected {
                 println!("new-rr intersected : {:?}", intersected);
 
-                let dist = (intersected - bot).magnitude();
+                let dist = (intersected - bot_point).magnitude();
                 vertex_events.insert_halfedge(new_he.clone(), intersected, dist);
             };
         }
@@ -1088,16 +1109,17 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
     // 最後に完結していないVoronoi-edgeを吐き出す。
     // Half-edgeと１つのveの点を使って無限またはバウンダリーまで伸ばす。
     let opened_ves = voronoi_edges.clone();
-    halfedges.visit_all(&|he| {
+    halfedges.visit_all(&|mut he| {
         let min_border = FPoint2::new(-100f32, -100f32);
         let max_border = FPoint2::new(100f32, 100f32);
         if he.edge.is_none() {
             return;
         }
 
-        //println!("for he : {:?}", he);
+        dbg!(&he);
         if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
-            println!("New Voronoi Edge (Opened) {:?}", ve);
+            println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
+            he.push_edge_to_sites(ve);
             opened_ves.borrow_mut().push(ve);
         }
     });
@@ -1106,7 +1128,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
         let mut_ves = voronoi_edges.borrow_mut();
         mut_ves.iter().map(|&e| e).collect_vec()
     };
-    Some(results)
+    Some((results, sites))
 }
 
 fn main() {
@@ -1123,8 +1145,21 @@ fn main() {
     ];
 
     // Voronoi edges using fortune's sweepline algorithm.
-    let voronoi_edges = convert_to_voronoi(&points).unwrap();
+    let (voronoi_edges, sites) = convert_to_voronoi(&points).unwrap();
+    points
+        .iter()
+        .for_each(|site| println!("Input Site : {}", site));
+    println!("");
 
-    points.iter().for_each(|site| println!("Input site : {}", site));
-    voronoi_edges.iter().enumerate().for_each(|(i, c)| println!("{:3}, Output edges : {:?}", i, c));
+    voronoi_edges
+        .iter()
+        .enumerate()
+        .for_each(|(i, c)| println!("{:3}, Output : {:?}", i, c));
+    println!("");
+
+    sites.iter().enumerate().for_each(|(i, s)| {
+        let bs = s.borrow();
+        println!("{:3}, Site : {:?}", i, bs.point);
+        bs.voronoi_edges.iter().enumerate().for_each(|(i, &v)| println!("\t{:3}, {:?}", i, v));
+    });
 }

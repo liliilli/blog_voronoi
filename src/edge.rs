@@ -13,6 +13,38 @@ pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool 
     (x.abs() <= epsilon) && (y.abs() <= epsilon)
 }
 
+static mut SITE_ID_COUNTER: usize = 0;
+
+#[derive(Debug)]
+pub struct Site {
+    id: usize,
+    pub point: FPoint2,
+    pub voronoi_edges: Vec<Edge>,
+}
+pub type SiteRcCell = Rc<RefCell<Site>>;
+
+impl Site {
+    pub fn into_rccell(self) -> SiteRcCell {
+        Rc::new(RefCell::new(self))
+    }
+
+    pub fn from_point(point: FPoint2) -> Self {
+        Self {
+            id: unsafe {
+                let id = SITE_ID_COUNTER;
+                SITE_ID_COUNTER += 1;
+                id
+            },
+            point,
+            voronoi_edges: vec![],
+        }
+    }
+
+    pub fn insert_edge(&mut self, edge: Edge) {
+        self.voronoi_edges.push(edge);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
     pub start: FPoint2,
@@ -98,6 +130,69 @@ pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, 
 }
 
 #[derive(Debug, Clone)]
+pub struct SiteEdge {
+    start: SiteRcCell,
+    end: SiteRcCell,
+}
+
+impl SiteEdge {
+    pub fn new(start: SiteRcCell, end: SiteRcCell) -> Self {
+        Self { start, end }
+    }
+
+    pub fn start_point(&self) -> FPoint2 {
+        self.start.borrow().point
+    }
+
+    pub fn end_point(&self) -> FPoint2 {
+        self.end.borrow().point
+    }
+
+    pub fn get_center(&self) -> FPoint2 {
+        let start = self.start_point();
+        let end = self.end_point();
+
+        start + ((end - start) * 0.5f32)
+    }
+
+    pub fn get_reversed(&self) -> Self {
+        Self {
+            start: self.end.clone(),
+            end: self.start.clone(),
+        }
+    }
+
+    pub fn get_offset(&self) -> FVector2 {
+        let start = self.start_point();
+        let end = self.end_point();
+
+        end - start
+    }
+
+    pub fn try_get_direction(&self) -> Option<FVector2> {
+        let offset = self.get_offset();
+        if offset.magnitude_squared().is_normal() == false {
+            return None;
+        }
+
+        Some(offset.normalize())
+    }
+
+    pub fn clone_start(&self) -> SiteRcCell {
+        self.start.clone()
+    }
+
+    pub fn clone_end(&self) -> SiteRcCell {
+        self.end.clone()
+    }
+
+    pub fn insert_edge(&mut self, edge: Edge) {
+        self.start.borrow_mut().insert_edge(edge);
+        self.end.borrow_mut().insert_edge(edge);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum VoronoiEdge {
     None,
     InfFrom(Option<FPoint2>, Option<FPoint2>),
@@ -106,7 +201,7 @@ pub enum VoronoiEdge {
 
 #[derive(Debug)]
 pub struct EdgeContainer {
-    pub site_edge: Edge, // start is bottom, end is top when not reversed.
+    pub site_edge: SiteEdge, // start is bottom, end is top when not reversed.
     pub voronoi_edge: VoronoiEdge,
     pub bisector_pos: FPoint2,
     pub bisector_dir: FVector2,
@@ -114,7 +209,7 @@ pub struct EdgeContainer {
 pub type EdgeContainerRcCell = Rc<RefCell<EdgeContainer>>;
 
 impl EdgeContainer {
-    pub fn new(edge: &Edge) -> Self {
+    pub fn new(in_edge: SiteEdge) -> Self {
         // Check edge should be reversed or not.
         //
         // If start to edge offset does not satisfy below conditions, should be reversed.
@@ -125,7 +220,7 @@ impl EdgeContainer {
         // This logic is required for checking intersection, or left/right side for given point.
         // endはいつもstartよりxが大きいか、yが大きいことになる。
         let site_edge = {
-            let to_end = edge.end - edge.start;
+            let to_end = in_edge.end_point() - in_edge.start_point();
             let should_be_reversed = {
                 // offset must not be Inf, or Nan.
                 if to_end[1].is_normal() {
@@ -136,8 +231,8 @@ impl EdgeContainer {
             };
 
             match should_be_reversed {
-                true => *edge,
-                false => edge.get_reversed(),
+                true => in_edge,
+                false => in_edge.get_reversed(),
             }
         };
 
@@ -145,7 +240,7 @@ impl EdgeContainer {
         let bisector_pos = site_edge.get_center();
         let bisector_dir = {
             let d = site_edge.try_get_direction().unwrap();
-            if site_edge.end[0] > site_edge.start[0] {
+            if site_edge.end_point()[0] > site_edge.start_point()[0] {
                 // CCW
                 Rotation2::new(90f32.to_radians()) * d
             } else {
