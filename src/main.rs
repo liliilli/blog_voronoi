@@ -158,25 +158,13 @@ impl HalfEdge {
                 // reversedかではないかによって特殊に判定を行う必要がある。
                 let c = container.borrow();
                 let topsite = &c.site_edge.end;
-                //let bottom = &c.site_edge.start;
 
                 let is_right_of_site = point[0] > topsite[0];
-                if is_right_of_site && self.is_reversed_he == false {
-                    //println!("is_left_of_bisect : {:?} to {} is true", point, self.id);
+                if is_right_of_site && !self.is_reversed_he {
                     return Some(true);
-                } else if is_right_of_site == false && self.is_reversed_he {
-                    //println!("is_left_of_bisect : {:?} to {} is false", point, self.id);
+                } else if !is_right_of_site && self.is_reversed_he {
                     return Some(false);
                 }
-
-                // ax + by + c = 0として返す。
-                // 元アルゴリズムではax + by = cだったので、ここでは代わりにnegcを使う。
-                let (ca, cb, cc) = c.try_get_coefficients_of_bisect().unwrap();
-                let negc = -cc;
-                //println!(
-                //    "is_left_of_bisect : {:?} to {}x + {}y = {}",
-                //    point, ca, cb, negc
-                //);
 
                 match c.is_bisect_left_of(point) {
                     Some(v) => Some(match self.is_reversed_he {
@@ -185,38 +173,6 @@ impl HalfEdge {
                     }),
                     None => None,
                 }
-
-                // もしa == 0であれば（またはsubnormal）別ロジックを使う。
-                // example) by = -cで、xはどんな値でもOK.
-                //if ca.is_normal() == false {
-                //    println!("subnormal!");
-                //    let yl = negc - (ca * point[0]);
-                //    let t1 = point[1] - yl;
-                //    let t2 = point[0] - topsite[0];
-                //    let t3 = yl - topsite[1];
-
-                //    let left_above = (t1 * t1) > (t2 * t2 + t3 * t3);
-                //    Some(match self.is_reversed_he {
-                //        true => !left_above,
-                //        false => left_above,
-                //    })
-                //}
-                //else {
-                //    println!("normal!");
-                //    let dp = point - topsite; // (dxp, dyp)
-                //    let dxs = topsite[0] - bottom[0];
-
-                //    let mut left_above = (cb * (dp[0] * dp[0] - dp[1] * dp[1])) <
-                //        (dxs * dp[1] * (1f32 + 2f32 * dp[0] / dxs + cb * cb));
-                //    if cb < 0f32 {
-                //        left_above = (left_above == false);
-                //    }
-
-                //    Some(match self.is_reversed_he {
-                //        true => !left_above,
-                //        false => left_above,
-                //    })
-                //}
             }
             None => None,
         }
@@ -295,7 +251,7 @@ impl HalfEdge {
         // From real-time rendering, 4th ed.
         let s = (rbv - lbv).perp(&rbd) / lbd.perp(&rbd);
         let t = (lbv - rbv).perp(&lbd) / rbd.perp(&lbd);
-        if s.is_finite() == false || t.is_finite() == false {
+        if !s.is_finite() || !t.is_finite() {
             return None;
         }
         let intersected = lbv + (lbd * s);
@@ -314,11 +270,11 @@ impl HalfEdge {
 
         // Right of site of e?
         if intersected[0] >= e.end[0] {
-            if el.is_reversed_he == false {
+            if !el.is_reversed_he {
                 return None;
             }
         } else {
-            if el.is_reversed_he == true {
+            if el.is_reversed_he {
                 return None;
             }
         }
@@ -373,7 +329,7 @@ impl HalfEdge {
             let borrowed_ec = ec.borrow();
             borrowed_ec.try_get_coefficients_of_bisect().unwrap()
         };
-        if a.is_normal() == false && b.is_normal() == false {
+        if !a.is_normal() && !b.is_normal() {
             return None;
         }
 
@@ -498,7 +454,7 @@ impl HalfEdgeMap {
         let mut map = HalfEdgeBTreeMap::new();
 
         let mut most_left = HalfEdge::default_rccell();
-        let mut most_right = HalfEdge::default_rccell();
+        let most_right = HalfEdge::default_rccell();
         HalfEdge::chain_as_right(&mut most_left, most_right.clone());
 
         const MIN_LIMIT: f32 = -5000f32;
@@ -926,7 +882,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
 
     let mut halfedges = HalfEdgeMap::new();
     let mut vertex_events = HalfEdgeVertexEventMap::new();
-    let mut voronoi_edges = Rc::new(RefCell::new(Vec::<Edge>::new()));
+    let voronoi_edges = Rc::new(RefCell::new(Vec::<Edge>::new()));
 
     // Check when inside of voronoi points.
     // sitesを全部通った後にも新しいbpが出来ることがある。
@@ -996,9 +952,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             let ledge = l_halfedge.borrow().clone_edge().unwrap();
             let r_halfedge = HalfEdge::from_edge_container(ledge, true).into_rccell();
             HalfEdge::chain_as_right(&mut l_halfedge, r_halfedge.clone());
-            println!("u l_he : {:?}", l_halfedge);
-            println!("n r_he : {:?}", r_halfedge);
-            println!("");
+            //println!("u l_he : {:?}", l_halfedge);
+            //println!("n r_he : {:?}", r_halfedge);
+            //println!("");
 
             // Check intersect to create PQ for rev_bisect.
             let is_bisrev_intersected = r_halfedge
@@ -1012,15 +968,15 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<Vec<Edge>> {
             };
         } else {
             // ここでvertex_eventが空っぽなのかを確認する必要はないかと。
-            let (mut l_bnd, ve_point)  = {
+            let (l_bnd, ve_point)  = {
                 let lbnd_ve = vertex_events.try_extract_min().unwrap();
                 let v = lbnd_ve.borrow().vertex;
                 let l = lbnd_ve.borrow().halfedge.clone();
                 (l, v)
             };
-            println!("");
-            println!("");
-            println!("new vertex event : {}, {:?}", ve_point, l_bnd);
+            //println!("");
+            //println!("");
+            //println!("new vertex event : {}, {:?}", ve_point, l_bnd);
             vertex_events.print_all();
 
             let (mut ll_bnd, mut r_bnd, bot) = {
@@ -1168,5 +1124,7 @@ fn main() {
 
     // Voronoi edges using fortune's sweepline algorithm.
     let voronoi_edges = convert_to_voronoi(&points).unwrap();
+
+    points.iter().for_each(|site| println!("Input site : {}", site));
     voronoi_edges.iter().enumerate().for_each(|(i, c)| println!("{:3}, Output edges : {:?}", i, c));
 }
