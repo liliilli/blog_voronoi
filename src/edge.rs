@@ -1,10 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use nalgebra::{Matrix3, Point2, Point3, Rotation2, Vector2};
-type FPoint2 = Point2<f32>;
+use nalgebra::{Point3, Rotation2, Vector2};
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
-type FMatrix3 = Matrix3<f32>;
 
 pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
     let x = lhs[0] - rhs[0];

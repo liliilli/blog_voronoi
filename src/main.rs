@@ -8,9 +8,8 @@ use std::{
 };
 
 use itertools::Itertools;
-use nalgebra::{Point2, Vector2};
+use nalgebra::Point2;
 type FPoint2 = Point2<f32>;
-type FVector2 = Vector2<f32>;
 
 mod edge;
 use edge::{Edge, EdgeContainer, EdgeContainerRcCell, Site, SiteRcCell, VoronoiEdge};
@@ -913,7 +912,6 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             let site = site_queue.pop_front().unwrap();
             let site_point = site.borrow().point;
             new_site = Some(site.clone());
-
             //println!("");
             //println!("");
             //println!("new_site : {:?}", new_site);
@@ -1098,9 +1096,6 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             };
         }
 
-        //halfedges.print_all();
-        //vertex_events.print_all();
-
         // Check all half-edges are closed loop.
         // If not, assert because half-edge loop is invalid.
         halfedges.check_validation();
@@ -1116,7 +1111,6 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             return;
         }
 
-        dbg!(&he);
         if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
             println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
             he.push_edge_to_sites(ve);
