@@ -146,14 +146,16 @@ impl HalfEdgeVertexEventMap {
 
             return;
         }
+        dbg!(&vecell);
 
         // 条件に合うlast(maybe_down)を探す。(veより手前下)
         let mut maybe_down = match self.map.range(..OrderedFloat(key)).next() {
             Some((_, v)) => v.clone(),
             None => self.bottom.clone(),
         };
-        if maybe_down.borrow().up_next.is_some() {
-            loop {
+        loop {
+            if maybe_down.borrow().up_next.is_some() {
+                dbg!(&maybe_down);
                 let next = maybe_down.borrow().up_next.as_ref().unwrap().clone();
                 let (next_y_star, vertex_x) = {
                     let bor_next = next.borrow();
@@ -164,6 +166,8 @@ impl HalfEdgeVertexEventMap {
                 } else {
                     break;
                 }
+            } else {
+                break;
             }
         }
 

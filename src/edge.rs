@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use nalgebra::{Point2, Point3, Rotation2, Vector2};
+use nalgebra::{ComplexField, Point2, Point3, Rotation2, Vector2};
 type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
@@ -39,7 +39,19 @@ impl Site {
         }
     }
 
-    pub fn insert_edge(&mut self, edge: Edge) {
+    pub fn insert_edge(&mut self, mut edge: Edge) {
+        if edge.start[0].abs() < f32::EPSILON {
+            edge.start[0] = 0f32;
+        }
+        if edge.start[1].abs() < f32::EPSILON {
+            edge.start[1] = 0f32;
+        }
+        if edge.end[0].abs() < f32::EPSILON {
+            edge.end[0] = 0f32;
+        }
+        if edge.end[1].abs() < f32::EPSILON {
+            edge.end[1] = 0f32;
+        }
         self.voronoi_edges.push(edge);
     }
 }
@@ -125,7 +137,27 @@ pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, 
 
     // scaleして返す。
     let scaled_ab = ab.scale(factor.recip());
-    Some((scaled_ab[0], scaled_ab[1], -1f32 * unscaled_c / factor))
+    let mut a = scaled_ab[0];
+    let mut b = scaled_ab[1];
+    let mut c = -1f32 * unscaled_c / factor;
+    if a.abs() < f32::EPSILON {
+        a = 0f32;
+    }
+    if b.abs() < f32::EPSILON {
+        b = 0f32;
+    }
+    if c.abs() < f32::EPSILON {
+        c = 0f32;
+    }
+
+    // If b is negative, revert signnesses.
+    if b.is_sign_negative() {
+        a *= -1f32;
+        b *= -1f32;
+        c *= -1f32;
+    }
+
+    Some((a, b, c))
 }
 
 #[derive(Debug, Clone)]
@@ -239,13 +271,22 @@ impl EdgeContainer {
         let bisector_pos = site_edge.get_center();
         let bisector_dir = {
             let d = site_edge.try_get_direction().unwrap();
-            if site_edge.end_point()[0] > site_edge.start_point()[0] {
+            let mut dir = if site_edge.end_point()[0] > site_edge.start_point()[0] {
                 // CCW
                 Rotation2::new(90f32.to_radians()) * d
             } else {
                 // CW
                 Rotation2::new(-90f32.to_radians()) * d
+            };
+
+            // Check direction element is so small so errornous.
+            if dir[0].abs() < f32::EPSILON {
+                dir[0] = 0f32;
             }
+            if dir[1].abs() < f32::EPSILON {
+                dir[1] = 0f32;
+            }
+            dir
         };
 
         Self {
@@ -268,7 +309,7 @@ impl EdgeContainer {
         // If distance is positive, bisector is left side of point.
         // If distance is 0, point is on the bisector.
         match try_get_coefficients(&bd, &bc) {
-            Some((a, b, c)) => Some(((a * point[0]) + (b * point[1]) + c) > 0f32),
+            Some((a, b, c)) => Some(((a * point[0]) + (b * point[1]) - c) > 0f32),
             None => None,
         }
     }
