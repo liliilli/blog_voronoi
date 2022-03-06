@@ -394,10 +394,10 @@ impl HalfEdge {
                         y = p[1];
                     }
                 }
-                dbg!(y);
+                //dbg!(y);
                 let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
-                dbg!(x, y);
+                //dbg!(x, y);
                 FPoint2::new(x, y)
             };
             p2 = {

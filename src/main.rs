@@ -79,9 +79,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             // either given left or right may be end boundary half-edge.
             let mut l_boundary = halfedges.get_nearest_left_of(site_point).unwrap().clone();
             let r_boundary = l_boundary.borrow().try_get_right_he().unwrap().clone();
-            //println!("l_bd : {:?}", l_boundary);
-            //println!("r_bd : {:?}", r_boundary);
-            //println!("");
+            //dbg!(&new_site);
 
             // Get left end from right boundary if exist, otherwise, just return bottom_site.
             let bot = l_boundary
@@ -92,16 +90,16 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 HalfEdge::from_edge(SiteEdge::new(bot, site.clone()), false).into_rccell();
 
             HalfEdge::chain_as_right(&mut l_boundary, l_halfedge.clone());
-            //println!("u l_bd : {:?}", l_boundary);
-            //println!("n l_he : {:?}", l_halfedge);
-            //println!("");
+            //dbg!(&l_boundary);
+            //dbg!(&l_halfedge);
+            //dbg!(&r_boundary);
 
             // Check.. to create PQ for bisect.
             let is_leftbis_intersected = l_boundary
                 .borrow()
                 .try_get_bisect_intersected(&l_halfedge.borrow());
             if let Some(intersected) = is_leftbis_intersected {
-                println!("lb-lh intersected : {:?}", intersected);
+                //println!("lb-lh intersected : {:?}", intersected);
                 {
                     let mut halfedge = l_boundary.borrow_mut();
                     if halfedge.ve_ref.is_some() {
@@ -128,7 +126,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 .borrow()
                 .try_get_bisect_intersected(&r_boundary.borrow());
             if let Some(intersected) = is_bisrev_intersected {
-                println!("b-reb intersected : {:?}", intersected);
+                //println!("b-reb intersected : {:?}", intersected);
 
                 let dist = (intersected - site_point).magnitude();
                 vertex_events.insert_halfedge(r_halfedge.clone(), intersected, dist);
@@ -144,7 +142,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             //println!("");
             //println!("");
             //println!("new vertex event : {}, {:?}", ve_point, l_bnd);
-            vertex_events.print_all();
+            //vertex_events.print_all();
 
             let (mut ll_bnd, mut r_bnd, bot) = {
                 let borrowed_lbnd_he = l_bnd.borrow();
@@ -176,7 +174,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             {
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, l_bnd);
+                    //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, l_bnd);
                     l_bnd.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
@@ -184,7 +182,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             {
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, r_bnd);
+                    //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, r_bnd);
                     r_bnd.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
@@ -220,7 +218,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             {
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
-                    println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, new_he);
+                    //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, new_he);
                     new_he.borrow_mut().push_edge_to_sites(ve);
                     voronoi_edges.borrow_mut().push(ve);
                 }
@@ -230,7 +228,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             let is_llhe_nhe_intersected =
                 ll_bnd.borrow().try_get_bisect_intersected(&new_he.borrow());
             if let Some(intersected) = is_llhe_nhe_intersected {
-                println!("ll-new intersected : {:?}", intersected);
+                //println!("ll-new intersected : {:?}", intersected);
                 {
                     let mut halfedge = ll_bnd.borrow_mut();
                     if halfedge.ve_ref.is_some() {
@@ -247,7 +245,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             let is_nhe_rrhe_intersected =
                 new_he.borrow().try_get_bisect_intersected(&rr_bnd.borrow());
             if let Some(intersected) = is_nhe_rrhe_intersected {
-                println!("new-rr intersected : {:?}", intersected);
+                //println!("new-rr intersected : {:?}", intersected);
 
                 let dist = (intersected - bot_point).magnitude();
                 vertex_events.insert_halfedge(new_he.clone(), intersected, dist);
@@ -270,7 +268,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
         }
 
         if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
-            println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
+            //println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
             he.push_edge_to_sites(ve);
             opened_ves.borrow_mut().push(ve);
         }
@@ -285,15 +283,10 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
 
 fn main() {
     let points = [
-        FPoint2::new(1f32, 0f32),
-        FPoint2::new(-1f32, 0f32),
-        FPoint2::new(1f32, 2f32),
-        FPoint2::new(-1f32, 2f32),
-        FPoint2::new(13.9f32, 6.76f32),
-        FPoint2::new(12.7f32, 10.6f32),
-        FPoint2::new(8.7f32, 7.7f32),
-        FPoint2::new(7.1f32, 4.24f32),
-        FPoint2::new(4.6f32, 11.44f32),
+        FPoint2::new(1f32, 0f32), FPoint2::new(1f32, 2f32),
+        FPoint2::new(2f32, 0f32), FPoint2::new(2f32, 2f32),
+        FPoint2::new(3f32, 0f32), FPoint2::new(3f32, 2f32),
+        FPoint2::new(4f32, 0f32), FPoint2::new(4f32, 2f32),
     ];
 
     // Voronoi edges using fortune's sweepline algorithm.
@@ -317,4 +310,139 @@ fn main() {
             .enumerate()
             .for_each(|(i, &v)| println!("\t{:3}, {:?}", i, v));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{convert_to_voronoi, FPoint2};
+
+    fn test_func(points: &[FPoint2]) {
+        // Voronoi edges using fortune's sweepline algorithm.
+        let (voronoi_edges, sites) = convert_to_voronoi(&points).unwrap();
+        points
+            .iter()
+            .for_each(|site| println!("Input Site : {}", site));
+        println!("");
+
+        voronoi_edges
+            .iter()
+            .enumerate()
+            .for_each(|(i, c)| println!("{:3}, Output : {:?}", i, c));
+        println!("");
+
+        sites.iter().enumerate().for_each(|(i, s)| {
+            let bs = s.borrow();
+            println!("{:3}, Site : {:?}", i, bs.point);
+            bs.voronoi_edges
+                .iter()
+                .enumerate()
+                .for_each(|(i, &v)| println!("\t{:3}, {:?}", i, v));
+        });
+    }
+
+    #[test]
+    fn case1() {
+        let points = [
+            FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
+            FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
+        ];
+        test_func(&points);
+    }
+
+    #[test]
+    fn case2() {
+        let points = [
+            FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
+            FPoint2::new(1f32, 2f32), FPoint2::new(-1f32, 2f32),
+            FPoint2::new(13.9f32, 6.76f32),
+            FPoint2::new(12.7f32, 10.6f32),
+            FPoint2::new(8.7f32, 7.7f32),
+            FPoint2::new(7.1f32, 4.24f32),
+            FPoint2::new(4.6f32, 11.44f32),
+        ];
+        test_func(&points);
+    }
+
+    #[test]
+    fn case3() {
+        let points = [
+            FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
+            FPoint2::new(1f32, 1f32), FPoint2::new(-1f32, 1f32),
+            FPoint2::new(1f32, 2f32), FPoint2::new(-1f32, 2f32),
+            FPoint2::new(1f32, 3f32), FPoint2::new(-1f32, 3f32),
+            FPoint2::new(1f32, 4f32), FPoint2::new(-1f32, 4f32),
+            FPoint2::new(1f32, 5f32), FPoint2::new(-1f32, 5f32),
+            FPoint2::new(1f32, 6f32), FPoint2::new(-1f32, 6f32),
+            FPoint2::new(1f32, 7f32), FPoint2::new(-1f32, 7f32),
+            FPoint2::new(1f32, 8f32), FPoint2::new(-1f32, 8f32),
+            FPoint2::new(1f32, 9f32), FPoint2::new(-1f32, 9f32),
+            FPoint2::new(1f32, 10f32), FPoint2::new(-1f32, 10f32),
+            FPoint2::new(1f32, 11f32), FPoint2::new(-1f32, 11f32),
+            FPoint2::new(1f32, 12f32), FPoint2::new(-1f32, 12f32),
+            FPoint2::new(1f32, 13f32), FPoint2::new(-1f32, 13f32),
+            FPoint2::new(1f32, 14f32), FPoint2::new(-1f32, 14f32),
+            FPoint2::new(1f32, 15f32), FPoint2::new(-1f32, 15f32),
+            FPoint2::new(1f32, 16f32), FPoint2::new(-1f32, 16f32),
+        ];
+        test_func(&points);
+    }
+
+    #[test]
+    fn case4() {
+        let points = [
+            FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
+            FPoint2::new(2f32, 1f32), FPoint2::new(-2f32, 1f32),
+            FPoint2::new(3f32, 2f32), FPoint2::new(-3f32, 2f32),
+            FPoint2::new(4f32, 3f32), FPoint2::new(-4f32, 3f32),
+            FPoint2::new(3f32, 4f32), FPoint2::new(-3f32, 4f32),
+            FPoint2::new(2f32, 5f32), FPoint2::new(-2f32, 5f32),
+            FPoint2::new(1f32, 6f32), FPoint2::new(-1f32, 6f32),
+            FPoint2::new(1f32, 7f32), FPoint2::new(-1f32, 7f32),
+            FPoint2::new(1f32, 8f32), FPoint2::new(-1f32, 8f32),
+            FPoint2::new(1f32, 9f32), FPoint2::new(-1f32, 9f32),
+            FPoint2::new(2f32, 10f32), FPoint2::new(-2f32, 10f32),
+            FPoint2::new(3f32, 11f32), FPoint2::new(-3f32, 11f32),
+            FPoint2::new(4f32, 12f32), FPoint2::new(-4f32, 12f32),
+            FPoint2::new(7f32, 13f32), FPoint2::new(-7f32, 13f32),
+            FPoint2::new(6f32, 14f32), FPoint2::new(-6f32, 14f32),
+            FPoint2::new(5f32, 15f32), FPoint2::new(-5f32, 15f32),
+            FPoint2::new(4f32, 16f32), FPoint2::new(-4f32, 16f32),
+        ];
+        test_func(&points);
+    }
+    
+    #[test]
+    fn case5() {
+        let points = [
+            FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
+            FPoint2::new(2f32, 1f32), FPoint2::new(-2f32, 1f32),
+            FPoint2::new(3f32, 2f32), FPoint2::new(-3f32, 2f32),
+            FPoint2::new(4f32, 3f32), FPoint2::new(-4f32, 3f32),
+            FPoint2::new(3f32, 4f32), FPoint2::new(-3f32, 4f32),
+            FPoint2::new(2f32, 5f32), FPoint2::new(-2f32, 5f32),
+            FPoint2::new(1f32, 6f32), FPoint2::new(-1f32, 6f32),
+            FPoint2::new(1f32, 7f32), FPoint2::new(-1f32, 7f32),
+            FPoint2::new(1f32, 8f32), FPoint2::new(-1f32, 8f32),
+            FPoint2::new(1f32, 9f32), FPoint2::new(-1f32, 9f32),
+            FPoint2::new(2f32, 10f32), FPoint2::new(-2f32, 10f32),
+            FPoint2::new(3f32, 11f32), FPoint2::new(-3f32, 11f32),
+            FPoint2::new(4f32, 12f32), FPoint2::new(-4f32, 12f32),
+            FPoint2::new(7f32, 13f32), FPoint2::new(-7f32, 13f32),
+            FPoint2::new(6f32, 14f32), FPoint2::new(-6f32, 14f32),
+            FPoint2::new(5f32, 15f32), FPoint2::new(-5f32, 15f32),
+            FPoint2::new(4f32, 16f32), FPoint2::new(-4f32, 16f32),
+        ];
+        test_func(&points);
+    }
+
+    #[test]
+    fn case6() {
+        let points = [
+            FPoint2::new(1f32, 0f32), FPoint2::new(1f32, 2f32),
+            FPoint2::new(2f32, 0f32), FPoint2::new(2f32, 2f32),
+            FPoint2::new(3f32, 0f32), FPoint2::new(3f32, 2f32),
+            FPoint2::new(4f32, 0f32), FPoint2::new(4f32, 2f32),
+        ];
+        test_func(&points);
+    }
 }
