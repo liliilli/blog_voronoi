@@ -1,6 +1,8 @@
 # blog_voronoi
 Fortune's algorithmを使ったボロノイ図プロトタイプレポ
 
+[Blog post](https://liliilli.github.io/posts/220223_voronoi_sweepline/)
+
 # Credits
 
 [Steven Fortune's C implementation](https://9p.io/who/sjf/voronoi.tar)
