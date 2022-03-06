@@ -5,6 +5,22 @@ type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Direction 
+{
+    Left,
+    Up,
+    Right,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum VoronoiEdgeType
+{
+    Closed,
+    Opened((Direction, bool /* isReversed */))
+}
+
 pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
     let x = lhs[0] - rhs[0];
     let y = lhs[1] - rhs[1];
@@ -18,7 +34,7 @@ static mut SITE_ID_COUNTER: usize = 0;
 pub struct Site {
     id: usize,
     pub point: FPoint2,
-    pub voronoi_edges: Vec<Edge>,
+    pub voronoi_edges: Vec<(Edge, VoronoiEdgeType)>,
 }
 pub type SiteRcCell = Rc<RefCell<Site>>;
 
@@ -39,7 +55,7 @@ impl Site {
         }
     }
 
-    pub fn insert_edge(&mut self, mut edge: Edge) {
+    pub fn insert_edge(&mut self, mut edge: Edge, ve_type: VoronoiEdgeType) {
         if edge.start[0].abs() < f32::EPSILON {
             edge.start[0] = 0f32;
         }
@@ -52,7 +68,7 @@ impl Site {
         if edge.end[1].abs() < f32::EPSILON {
             edge.end[1] = 0f32;
         }
-        self.voronoi_edges.push(edge);
+        self.voronoi_edges.push((edge, ve_type));
     }
 }
 
@@ -217,9 +233,9 @@ impl SiteEdge {
         self.end.clone()
     }
 
-    pub fn insert_edge(&mut self, edge: Edge) {
-        self.start.borrow_mut().insert_edge(edge);
-        self.end.borrow_mut().insert_edge(edge);
+    pub fn insert_edge(&mut self, edge: Edge, ve_type: VoronoiEdgeType) {
+        self.start.borrow_mut().insert_edge(edge, ve_type);
+        self.end.borrow_mut().insert_edge(edge, ve_type);
     }
 }
 

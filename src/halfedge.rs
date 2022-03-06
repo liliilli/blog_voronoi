@@ -7,7 +7,7 @@ use std::{
 use ordered_float::OrderedFloat;
 
 use crate::{
-    edge::{Edge, EdgeContainer, EdgeContainerRcCell, SiteEdge, SiteRcCell, VoronoiEdge},
+    edge::{Edge, EdgeContainer, EdgeContainerRcCell, SiteEdge, SiteRcCell, VoronoiEdge, VoronoiEdgeType},
     vertevent::HalfEdgeVertexEventRcCell,
     FPoint2,
 };
@@ -311,25 +311,17 @@ impl HalfEdge {
         &self,
         min_boundary: FPoint2,
         max_boundary: FPoint2,
-    ) -> Option<Edge> {
-        let (mut p1, mut p2) = {
-            let ec = self.edge.as_ref().unwrap();
-            let borrowed_ec = ec.borrow();
-
-            (
-                borrowed_ec.site_edge.start_point(),
-                borrowed_ec.site_edge.end_point(),
-            )
-        };
-
+    ) -> Option<(Edge, VoronoiEdgeType)> {
         let (a, b, c) = {
             let ec = self.edge.as_ref().unwrap();
             let borrowed_ec = ec.borrow();
+            //dbg!(&self);
             borrowed_ec.try_get_coefficients_of_bisect().unwrap()
         };
-        if !a.is_normal() && !b.is_normal() {
+        if a.abs() < f32::EPSILON && b.abs() < f32::EPSILON {
             return None;
         }
+        //dbg!((a, b, c));
 
         let (s1, s2) = {
             let ec = self.edge.as_ref().unwrap();
@@ -342,30 +334,54 @@ impl HalfEdge {
 
         // Get a line.
         if b.abs() > f32::EPSILON
-        //a.is_subnormal()
         {
-            p1 = {
-                let mut x = min_boundary[0];
-                if let Some(p) = s1 {
-                    if p[0] > min_boundary[0] {
-                        x = p[0];
+            let mut p1 = {
+                let x = if let Some(p) = s1 {
+                    if min_boundary[0] >= p[0] {
+                        println!("left x collided");
+                        min_boundary[0]
                     }
-                }
-                let x = x.clamp(min_boundary[0], max_boundary[0]);
+                    else {
+                        p[0]
+                    }
+                } else {
+                    println!("left x collided");
+                    min_boundary[0]
+                };
+                //let mut x = min_boundary[0];
+                //if let Some(p) = s1 {
+                //    if p[0] > min_boundary[0] {
+                //        x = p[0];
+                //    }
+                //}
+                //let x = x.clamp(min_boundary[0], max_boundary[0]);
                 let y = ((a * x) + c) / b * -1f32;
                 FPoint2::new(x, y)
             };
-            p2 = {
-                let mut x = max_boundary[0];
-                if let Some(p) = s2 {
-                    if p[0] < max_boundary[0] {
-                        x = p[0];
+            let mut p2 = {
+                let x = if let Some(p) = s2 {
+                    if max_boundary[0] <= p[0] {
+                        println!("right x collided");
+                        max_boundary[0]
                     }
-                }
-                let x = x.clamp(min_boundary[0], max_boundary[0]);
+                    else {
+                        p[0]
+                    }
+                } else {
+                    println!("right x collided");
+                    max_boundary[0]
+                };
+                //let mut x = max_boundary[0];
+                //if let Some(p) = s2 {
+                //    if p[0] < max_boundary[0] {
+                //        x = p[0];
+                //    }
+                //}
+                //let x = x.clamp(min_boundary[0], max_boundary[0]);
                 let y = ((a * x) + c) / b * -1f32;
                 FPoint2::new(x, y)
             };
+            //dbg!(p1, p2);
 
             // Check updated (p1, p2) is out of bound.
             let (miny, maxy) = (min_boundary[1], max_boundary[1]);
@@ -377,40 +393,69 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1y_clipped = p1[1].clamp(miny, maxy);
             if p1y_clipped != p1[1] {
+                //dbg!(p1y_clipped != p1[1]);
                 let x = ((b * p1y_clipped) + c) / a * -1f32;
                 p1 = FPoint2::new(x, p1y_clipped);
             }
 
             let p2y_clipped = p2[1].clamp(miny, maxy);
             if p2y_clipped != p2[1] {
+                //dbg!(p2y_clipped != p2[1]);
                 let x = ((b * p2y_clipped) + c) / a * -1f32;
                 p2 = FPoint2::new(x, p2y_clipped);
             }
-        } else if a.abs() > f32::EPSILON {
-            p1 = {
-                let mut y = min_boundary[1];
-                if let Some(p) = s1 {
-                    if p[1] > min_boundary[1] {
-                        y = p[1];
+
+            Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+        } else {
+            let mut p2 = {
+                let y = if let Some(p) = s2 {
+                    if min_boundary[1] >= p[1] {
+                        println!("down x collided");
+                        min_boundary[1]
                     }
-                }
+                    else {
+                        p[1]
+                    }
+                } else {
+                    println!("down x collided");
+                    min_boundary[1]
+                };
+                //let mut y = min_boundary[1];
+                //if let Some(p) = s1 {
+                //    if p[1] > min_boundary[1] {
+                //        y = p[1];
+                //    }
+                //}
                 //dbg!(y);
                 let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
                 //dbg!(x, y);
                 FPoint2::new(x, y)
             };
-            p2 = {
-                let mut y = min_boundary[1];
-                if let Some(p) = s2 {
-                    if p[1] < max_boundary[1] {
-                        y = p[1];
+            let mut p1 = {
+                let y = if let Some(p) = s1 {
+                    if max_boundary[1] <= p[1] {
+                        println!("up x collided");
+                        max_boundary[1]
                     }
-                }
+                    else {
+                        p[1]
+                    }
+                } else {
+                    println!("up x collided");
+                    max_boundary[1]
+                };
+                //let mut y = min_boundary[1];
+                //if let Some(p) = s2 {
+                //    if p[1] < max_boundary[1] {
+                //        y = p[1];
+                //    }
+                //}
                 let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
                 FPoint2::new(x, y)
             };
+            //dbg!(p1, p2);
 
             // Check updated (p1, p2) is out of bound.
             let (minx, maxx) = (min_boundary[0], max_boundary[0]);
@@ -422,25 +467,27 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1x_clipped = p1[0].clamp(minx, maxx);
             if p1x_clipped != p1[0] {
+                //dbg!(p1x_clipped != p1[0]);
                 let y = ((a * p1x_clipped) + c) / b * -1f32;
                 p1 = FPoint2::new(p1x_clipped, y);
             }
 
             let p2x_clipped = p2[0].clamp(minx, maxx);
             if p2x_clipped != p2[0] {
+                //dbg!(p2x_clipped != p2[0]);
                 let y = ((a * p2x_clipped) + c) / b * -1f32;
                 p2 = FPoint2::new(p2x_clipped, y);
             }
-        }
 
-        Some(Edge::new(p1, p2))
+            Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+        }
     }
 
-    pub fn push_edge_to_sites(&mut self, ve: Edge) {
+    pub fn push_edge_to_sites(&mut self, ve: Edge, ve_type: VoronoiEdgeType) {
         match self.edge.as_mut() {
             Some(ec) => {
                 let mut mut_ec = ec.borrow_mut();
-                mut_ec.site_edge.insert_edge(ve);
+                mut_ec.site_edge.insert_edge(ve, ve_type);
             }
             _ => (),
         }

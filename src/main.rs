@@ -12,7 +12,7 @@ use itertools::Itertools;
 use nalgebra::Point2;
 type FPoint2 = Point2<f32>;
 
-use edge::{Edge, Site, SiteEdge, SiteRcCell};
+use edge::{Edge, Site, SiteEdge, SiteRcCell, VoronoiEdgeType};
 
 fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<SiteRcCell>> {
     // Make meta point list which contains triangle & edge meta information.
@@ -175,7 +175,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, l_bnd);
-                    l_bnd.borrow_mut().push_edge_to_sites(ve);
+                    l_bnd.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -183,10 +183,11 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, r_bnd);
-                    r_bnd.borrow_mut().push_edge_to_sites(ve);
+                    r_bnd.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
+            //dbg!(&l_bnd, &r_bnd);
 
             // Remove half-edges and vertex-events.
             halfedges.remove(l_bnd);
@@ -219,7 +220,7 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, new_he);
-                    new_he.borrow_mut().push_edge_to_sites(ve);
+                    new_he.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -259,6 +260,8 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
 
     // 最後に完結していないVoronoi-edgeを吐き出す。
     // Half-edgeと１つのveの点を使って無限またはバウンダリーまで伸ばす。
+    //halfedges.print_all();
+
     let opened_ves = voronoi_edges.clone();
     halfedges.visit_all(&|mut he| {
         let min_border = FPoint2::new(-100f32, -100f32);
@@ -267,9 +270,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
             return;
         }
 
-        if let Some(ve) = he.try_get_voronoi_edge(min_border, max_border) {
+        if let Some((ve, ve_type)) = he.try_get_voronoi_edge(min_border, max_border) {
             //println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
-            he.push_edge_to_sites(ve);
+            he.push_edge_to_sites(ve, ve_type);
             opened_ves.borrow_mut().push(ve);
         }
     });
@@ -283,10 +286,11 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
 
 fn main() {
     let points = [
-        FPoint2::new(1f32, 0f32), FPoint2::new(1f32, 2f32),
-        FPoint2::new(2f32, 0f32), FPoint2::new(2f32, 2f32),
-        FPoint2::new(3f32, 0f32), FPoint2::new(3f32, 2f32),
-        FPoint2::new(4f32, 0f32), FPoint2::new(4f32, 2f32),
+        //FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
+        //FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
+        FPoint2::new(-1f32, 1f32),
+        FPoint2::new(1f32, 1f32),
+        FPoint2::new(0f32, -1f32),
     ];
 
     // Voronoi edges using fortune's sweepline algorithm.
