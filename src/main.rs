@@ -12,7 +12,9 @@ use itertools::Itertools;
 use nalgebra::Point2;
 type FPoint2 = Point2<f32>;
 
-use edge::{Edge, Site, SiteEdge, SiteRcCell, VoronoiEdgeType};
+use edge::{Edge, Site, SiteEdge, SiteRcCell, VoronoiEdgeType, Direction};
+
+use crate::edge::is_nearly_same_fpoint2;
 
 fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<SiteRcCell>> {
     // Make meta point list which contains triangle & edge meta information.
@@ -289,16 +291,66 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
         let border_down_corner = FPoint2::new(max_border[0], min_border[1]);
 
         [
-            (border_left_corner, border_up_corner),
-            (border_up_corner, border_right_corner),
-            (border_right_corner, border_down_corner),
-            (border_down_corner, border_left_corner),
+            (Direction::Left, border_left_corner, border_up_corner),
+            (Direction::Up, border_up_corner, border_right_corner),
+            (Direction::Right, border_right_corner, border_down_corner),
+            (Direction::Down, border_down_corner, border_left_corner),
         ]
     };
     sites.iter_mut().for_each(|s| {
-        let bmut_s = s.borrow_mut();
+        let mut bmut_s = s.borrow_mut();
+        if bmut_s.is_closed().unwrap_or(true) {
+            return;
+        }
 
+        // When site's cell is opened, we can get boundary edges into a cell.
+        let mut inserted_corners: Vec<FPoint2> = vec![];
+        for &(dir, corner, rev_corner) in &border_corners {
+            // dirからvoronoi edgeを見つける。
+            let open_edges = bmut_s.find_open_edges_of_direction(dir);
+            if open_edges.is_empty() { continue; }
 
+            assert!(open_edges.len() <= 2);
+            if open_edges.len() == 2 {
+                // Open線分が同じ方向で２つ以上なら、CellはConvexなのでコーナーが無いことを示す。
+                // その場合には、OpenEdgeの互いの衝突点をつなぐ。
+                // 方向性は関係ない。
+                let start = match open_edges.first().unwrap().1 {
+                    VoronoiEdgeType::Opened(((_, o), _)) => o,
+                    _ => unreachable!(),
+                };
+                let end = match open_edges.last().unwrap().1 {
+                    VoronoiEdgeType::Opened(((_, o), _)) => o,
+                    _ => unreachable!(),
+                };
+
+                bmut_s.insert_edge(Edge::new(start, end), VoronoiEdgeType::Boundary);
+                continue;
+            }
+
+            // この分岐ではedgeは１つしかないので、方向性を見てコーナー点を選んでつなげる。
+            let (start, rev) = match open_edges.first().unwrap().1 {
+                VoronoiEdgeType::Opened(((_, o), rev)) => (o, rev),
+                _ => unreachable!(),
+            };
+            let end = match rev {
+                true => rev_corner,
+                false => corner,
+            };
+            bmut_s.insert_edge(Edge::new(start, end), VoronoiEdgeType::Boundary);
+            inserted_corners.push(end);
+        }
+
+        // もし入れた点が2つ以上なら（3つ以上はありえない。）
+        assert!(inserted_corners.len() <= 2);
+        if inserted_corners.len() == 2 {
+            // そしてコーナー点がそれぞれ異なっているかを見て異なったら別のEdgeとして入れる。
+            let lhs = *inserted_corners.first().unwrap();
+            let rhs = *inserted_corners.last().unwrap();
+            if !is_nearly_same_fpoint2(lhs, rhs, f32::EPSILON) {
+                bmut_s.insert_edge(Edge::new(lhs, rhs), VoronoiEdgeType::Boundary);
+            }
+        }
     }); 
 
     let ves_without_boundary= {

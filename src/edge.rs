@@ -6,7 +6,7 @@ type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Left,
     Up,
@@ -18,6 +18,7 @@ pub enum Direction {
 pub enum VoronoiEdgeType {
     Closed,
     Opened(((Direction, FPoint2), bool /* isReversed */)),
+    Boundary,
 }
 
 pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
@@ -79,8 +80,23 @@ impl Site {
 
         Some(self.voronoi_edges.iter().all(|(_, ve_type)| match ve_type {
             VoronoiEdgeType::Closed => true,
-            VoronoiEdgeType::Opened(_) => false,
+            // Boundaryも含む。
+            _ => false,
         }))
+    }
+
+    pub fn find_open_edges_of_direction(&self, dir: Direction) -> Vec<(Edge, VoronoiEdgeType)>
+    {
+        if self.voronoi_edges.is_empty() {
+            return vec![];
+        }
+
+        self.voronoi_edges.iter().filter(|(_, ve)| {
+            match ve {
+                VoronoiEdgeType::Opened(((target_dir, _), _)) => *target_dir == dir,
+                _ => false,
+            }
+        }).map(|&v| v).collect_vec()
     }
 }
 
