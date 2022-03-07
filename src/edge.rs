@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use itertools::Itertools;
 use nalgebra::{ComplexField, Point2, Point3, Rotation2, Vector2};
 type FPoint2 = Point2<f32>;
 type FPoint3 = Point3<f32>;
@@ -67,6 +68,19 @@ impl Site {
             edge.end[1] = 0f32;
         }
         self.voronoi_edges.push((edge, ve_type));
+    }
+
+    /// Check cell of site is closed or opened. 
+    /// If site does not have any voronoi edges, just return [None] value.
+    pub fn is_closed(&self) -> Option<bool> {
+        if self.voronoi_edges.is_empty() {
+            return None;
+        }
+
+        Some(self.voronoi_edges.iter().all(|(_, ve_type)| match ve_type {
+            VoronoiEdgeType::Closed => true,
+            VoronoiEdgeType::Opened(_) => false,
+        }))
     }
 }
 
