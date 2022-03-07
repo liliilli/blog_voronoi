@@ -7,7 +7,10 @@ use std::{
 use ordered_float::OrderedFloat;
 
 use crate::{
-    edge::{Edge, EdgeContainer, EdgeContainerRcCell, SiteEdge, SiteRcCell, VoronoiEdge, VoronoiEdgeType},
+    edge::{
+        Direction, Edge, EdgeContainer, EdgeContainerRcCell, SiteEdge, SiteRcCell, VoronoiEdge,
+        VoronoiEdgeType,
+    },
     vertevent::HalfEdgeVertexEventRcCell,
     FPoint2,
 };
@@ -331,53 +334,49 @@ impl HalfEdge {
                 _ => unreachable!(),
             }
         };
+        let is_reversed = {
+            match (s1, s2) {
+                (None, None) => unreachable!(),
+                (None, Some(_)) => Some(true),
+                (Some(_), None) => Some(false),
+                (Some(_), Some(_)) => None,
+            }
+        };
 
         // Get a line.
-        if b.abs() > f32::EPSILON
-        {
+        if b.abs() > f32::EPSILON {
+            let mut collision = None;
             let mut p1 = {
                 let x = if let Some(p) = s1 {
                     if min_boundary[0] >= p[0] {
-                        println!("left x collided");
+                        // left x collided
+                        collision = Some(Direction::Left);
                         min_boundary[0]
-                    }
-                    else {
+                    } else {
                         p[0]
                     }
                 } else {
-                    println!("left x collided");
+                    // left x collided
+                    collision = Some(Direction::Left);
                     min_boundary[0]
                 };
-                //let mut x = min_boundary[0];
-                //if let Some(p) = s1 {
-                //    if p[0] > min_boundary[0] {
-                //        x = p[0];
-                //    }
-                //}
-                //let x = x.clamp(min_boundary[0], max_boundary[0]);
                 let y = ((a * x) + c) / b * -1f32;
                 FPoint2::new(x, y)
             };
             let mut p2 = {
                 let x = if let Some(p) = s2 {
                     if max_boundary[0] <= p[0] {
-                        println!("right x collided");
+                        // Right x collided
+                        collision = Some(Direction::Right);
                         max_boundary[0]
-                    }
-                    else {
+                    } else {
                         p[0]
                     }
                 } else {
-                    println!("right x collided");
+                    // Right x collided
+                    collision = Some(Direction::Right);
                     max_boundary[0]
                 };
-                //let mut x = max_boundary[0];
-                //if let Some(p) = s2 {
-                //    if p[0] < max_boundary[0] {
-                //        x = p[0];
-                //    }
-                //}
-                //let x = x.clamp(min_boundary[0], max_boundary[0]);
                 let y = ((a * x) + c) / b * -1f32;
                 FPoint2::new(x, y)
             };
@@ -393,65 +392,67 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1y_clipped = p1[1].clamp(miny, maxy);
             if p1y_clipped != p1[1] {
-                //dbg!(p1y_clipped != p1[1]);
+                collision = match p1y_clipped == miny {
+                    true => Some(Direction::Down),
+                    false => Some(Direction::Up),
+                };
+
                 let x = ((b * p1y_clipped) + c) / a * -1f32;
                 p1 = FPoint2::new(x, p1y_clipped);
             }
 
             let p2y_clipped = p2[1].clamp(miny, maxy);
             if p2y_clipped != p2[1] {
-                //dbg!(p2y_clipped != p2[1]);
+                collision = match p2y_clipped == miny {
+                    true => Some(Direction::Down),
+                    false => Some(Direction::Up),
+                };
+
                 let x = ((b * p2y_clipped) + c) / a * -1f32;
                 p2 = FPoint2::new(x, p2y_clipped);
             }
 
-            Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+            if let Some(col_dir) = collision {
+                Some((
+                    Edge::new(p1, p2),
+                    VoronoiEdgeType::Opened((col_dir, is_reversed.unwrap_or(false))),
+                ))
+            } else {
+                Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+            }
         } else {
+            let mut collision = None;
             let mut p2 = {
                 let y = if let Some(p) = s2 {
                     if min_boundary[1] >= p[1] {
-                        println!("down x collided");
+                        // down y collided
+                        collision = Some(Direction::Down);
                         min_boundary[1]
-                    }
-                    else {
+                    } else {
                         p[1]
                     }
                 } else {
-                    println!("down x collided");
+                    // down y collided
+                    collision = Some(Direction::Down);
                     min_boundary[1]
                 };
-                //let mut y = min_boundary[1];
-                //if let Some(p) = s1 {
-                //    if p[1] > min_boundary[1] {
-                //        y = p[1];
-                //    }
-                //}
-                //dbg!(y);
-                let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
-                //dbg!(x, y);
                 FPoint2::new(x, y)
             };
             let mut p1 = {
                 let y = if let Some(p) = s1 {
                     if max_boundary[1] <= p[1] {
-                        println!("up x collided");
+                        // up y collided
+                        collision = Some(Direction::Up);
                         max_boundary[1]
-                    }
-                    else {
+                    } else {
                         p[1]
                     }
                 } else {
-                    println!("up x collided");
+                    // up y collided
+                    collision = Some(Direction::Up);
                     max_boundary[1]
                 };
-                //let mut y = min_boundary[1];
-                //if let Some(p) = s2 {
-                //    if p[1] < max_boundary[1] {
-                //        y = p[1];
-                //    }
-                //}
-                let y = y.clamp(min_boundary[1], max_boundary[1]);
                 let x = ((b * y) + c) / a * -1f32;
                 FPoint2::new(x, y)
             };
@@ -467,26 +468,50 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1x_clipped = p1[0].clamp(minx, maxx);
             if p1x_clipped != p1[0] {
-                //dbg!(p1x_clipped != p1[0]);
+                collision = match p1x_clipped == minx {
+                    true => Some(Direction::Left),
+                    false => Some(Direction::Right),
+                };
+
                 let y = ((a * p1x_clipped) + c) / b * -1f32;
                 p1 = FPoint2::new(p1x_clipped, y);
             }
 
             let p2x_clipped = p2[0].clamp(minx, maxx);
             if p2x_clipped != p2[0] {
-                //dbg!(p2x_clipped != p2[0]);
+                collision = match p2x_clipped == minx {
+                    true => Some(Direction::Left),
+                    false => Some(Direction::Right),
+                };
+
                 let y = ((a * p2x_clipped) + c) / b * -1f32;
                 p2 = FPoint2::new(p2x_clipped, y);
             }
 
-            Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+            if let Some(col_dir) = collision {
+                Some((
+                    Edge::new(p1, p2),
+                    VoronoiEdgeType::Opened((col_dir, is_reversed.unwrap_or(false))),
+                ))
+            } else {
+                Some((Edge::new(p1, p2), VoronoiEdgeType::Closed))
+            }
         }
     }
 
-    pub fn push_edge_to_sites(&mut self, ve: Edge, ve_type: VoronoiEdgeType) {
+    pub fn push_edge_to_sites(&mut self, ve: Edge, in_ve_type: VoronoiEdgeType) {
         match self.edge.as_mut() {
             Some(ec) => {
                 let mut mut_ec = ec.borrow_mut();
+                let ve_type = match in_ve_type {
+                    // もしOpenedなら、HalfEdgeの方向によって逆にして入れる必要がある。
+                    VoronoiEdgeType::Opened((dir, rev)) => match self.is_reversed_he {
+                        true => VoronoiEdgeType::Opened((dir, !rev)),
+                        false => VoronoiEdgeType::Opened((dir, !rev))
+                    },
+                    v => v,
+                };
+
                 mut_ec.site_edge.insert_edge(ve, ve_type);
             }
             _ => (),

@@ -6,8 +6,7 @@ type FPoint3 = Point3<f32>;
 type FVector2 = Vector2<f32>;
 
 #[derive(Debug, Clone, Copy)]
-pub enum Direction 
-{
+pub enum Direction {
     Left,
     Up,
     Right,
@@ -15,10 +14,9 @@ pub enum Direction
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum VoronoiEdgeType
-{
+pub enum VoronoiEdgeType {
     Closed,
-    Opened((Direction, bool /* isReversed */))
+    Opened((Direction, bool /* isReversed */)),
 }
 
 pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
@@ -235,6 +233,12 @@ impl SiteEdge {
 
     pub fn insert_edge(&mut self, edge: Edge, ve_type: VoronoiEdgeType) {
         self.start.borrow_mut().insert_edge(edge, ve_type);
+
+        // もしOpenedなら、reversedを逆にして（startとは逆方向にする）入れる。
+        let ve_type = match ve_type {
+            VoronoiEdgeType::Opened((dir, rev)) => VoronoiEdgeType::Opened((dir, !rev)),
+            v => v,
+        };
         self.end.borrow_mut().insert_edge(edge, ve_type);
     }
 }

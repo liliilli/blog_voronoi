@@ -175,7 +175,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = l_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, l_bnd);
-                    l_bnd.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
+                    l_bnd
+                        .borrow_mut()
+                        .push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -183,7 +185,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = r_bnd.borrow_mut().update_voronoi_edge(ve_point, false);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, r_bnd);
-                    r_bnd.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
+                    r_bnd
+                        .borrow_mut()
+                        .push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -220,7 +224,9 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
                 let ove = new_he.borrow_mut().update_voronoi_edge(ve_point, true);
                 if let Some(ve) = ove {
                     //println!("New Voronoi Edge (Closed) {:?} \n\tin HE {:?}", ve, new_he);
-                    new_he.borrow_mut().push_edge_to_sites(ve, VoronoiEdgeType::Closed);
+                    new_he
+                        .borrow_mut()
+                        .push_edge_to_sites(ve, VoronoiEdgeType::Closed);
                     voronoi_edges.borrow_mut().push(ve);
                 }
             }
@@ -286,11 +292,11 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
 
 fn main() {
     let points = [
-        //FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
-        //FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
-        FPoint2::new(-1f32, 1f32),
-        FPoint2::new(1f32, 1f32),
-        FPoint2::new(0f32, -1f32),
+        FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
+        FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
+        //FPoint2::new(-1f32, 1f32),
+        //FPoint2::new(1f32, 1f32),
+        //FPoint2::new(0f32, -1f32),
     ];
 
     // Voronoi edges using fortune's sweepline algorithm.
@@ -358,10 +364,8 @@ mod tests {
         let points = [
             FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
             FPoint2::new(1f32, 2f32), FPoint2::new(-1f32, 2f32),
-            FPoint2::new(13.9f32, 6.76f32),
-            FPoint2::new(12.7f32, 10.6f32),
-            FPoint2::new(8.7f32, 7.7f32),
-            FPoint2::new(7.1f32, 4.24f32),
+            FPoint2::new(13.9f32, 6.76f32), FPoint2::new(12.7f32, 10.6f32),
+            FPoint2::new(8.7f32, 7.7f32), FPoint2::new(7.1f32, 4.24f32),
             FPoint2::new(4.6f32, 11.44f32),
         ];
         test_func(&points);
@@ -414,7 +418,7 @@ mod tests {
         ];
         test_func(&points);
     }
-    
+
     #[test]
     fn case5() {
         let points = [
