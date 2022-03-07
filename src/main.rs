@@ -40,7 +40,7 @@ fn create_sorted_sites(delaunarys: &[FPoint2]) -> Option<Vec<SiteRcCell>> {
 
 fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCell>)> {
     // Make meta point list which contains triangle & edge meta information.
-    let sites = create_sorted_sites(delaunarys).unwrap();
+    let mut sites = create_sorted_sites(delaunarys).unwrap();
     let mut site_queue: VecDeque<_> = {
         sites.iter().for_each(|t| println!("Sites : {:?}", t));
         sites.iter().map(|s| s.clone()).collect()
@@ -267,36 +267,61 @@ fn convert_to_voronoi(delaunarys: &[FPoint2]) -> Option<(Vec<Edge>, Vec<SiteRcCe
     // 最後に完結していないVoronoi-edgeを吐き出す。
     // Half-edgeと１つのveの点を使って無限またはバウンダリーまで伸ばす。
     //halfedges.print_all();
-
+    let min_border = FPoint2::new(-100f32, -100f32);
+    let max_border = FPoint2::new(100f32, 100f32);
     let opened_ves = voronoi_edges.clone();
     halfedges.visit_all(&|mut he| {
-        let min_border = FPoint2::new(-100f32, -100f32);
-        let max_border = FPoint2::new(100f32, 100f32);
         if he.edge.is_none() {
             return;
         }
 
         if let Some((ve, ve_type)) = he.try_get_voronoi_edge(min_border, max_border) {
-            //println!("New Voronoi Edge (Opened) {:?} \n\tin HE {:?}", ve, he);
             he.push_edge_to_sites(ve, ve_type);
             opened_ves.borrow_mut().push(ve);
         }
     });
 
-    let results = {
+    // 各開いたボロノイ部屋にBoxバウンダリーからの線を入れる。
+    let border_corners = {
+        let border_left_corner = min_border;
+        let border_up_corner = FPoint2::new(min_border[0], max_border[1]);
+        let border_right_corner = max_border;
+        let border_down_corner = FPoint2::new(max_border[0], min_border[1]);
+
+        [
+            (border_left_corner, border_up_corner),
+            (border_up_corner, border_right_corner),
+            (border_right_corner, border_down_corner),
+            (border_down_corner, border_left_corner),
+        ]
+    };
+    sites.iter_mut().for_each(|s| {
+        let bmut_s = s.borrow_mut();
+
+
+    }); 
+
+    let ves_without_boundary= {
         let mut_ves = voronoi_edges.borrow_mut();
         mut_ves.iter().map(|&e| e).collect_vec()
     };
-    Some((results, sites))
+    Some((ves_without_boundary, sites))
 }
 
 fn main() {
     let points = [
-        FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
-        FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
         //FPoint2::new(-1f32, 1f32),
         //FPoint2::new(1f32, 1f32),
         //FPoint2::new(0f32, -1f32),
+
+        //FPoint2::new(2f32, 0f32), FPoint2::new(-2f32, 0f32),
+        //FPoint2::new(2f32, 2f32), FPoint2::new(-2f32, 2f32),
+
+        FPoint2::new(1f32, 0f32), FPoint2::new(-1f32, 0f32),
+        FPoint2::new(1f32, 2f32), FPoint2::new(-1f32, 2f32),
+        FPoint2::new(13.9f32, 6.76f32), FPoint2::new(12.7f32, 10.6f32),
+        FPoint2::new(8.7f32, 7.7f32), FPoint2::new(7.1f32, 4.24f32),
+        FPoint2::new(4.6f32, 11.44f32),
     ];
 
     // Voronoi edges using fortune's sweepline algorithm.
@@ -314,7 +339,7 @@ fn main() {
 
     sites.iter().enumerate().for_each(|(i, s)| {
         let bs = s.borrow();
-        println!("{:3}, Site : {:?}", i, bs.point);
+        println!("{:3}, Site : {:?}, Closed: {:?}", i, bs.point, bs.is_closed());
         bs.voronoi_edges
             .iter()
             .enumerate()

@@ -347,38 +347,40 @@ impl HalfEdge {
         if b.abs() > f32::EPSILON {
             let mut collision = None;
             let mut p1 = {
-                let x = if let Some(p) = s1 {
+                let (x, left_col) = if let Some(p) = s1 {
                     if min_boundary[0] >= p[0] {
-                        // left x collided
-                        collision = Some(Direction::Left);
-                        min_boundary[0]
+                        (min_boundary[0], true)
                     } else {
-                        p[0]
+                        (p[0], false)
                     }
                 } else {
-                    // left x collided
-                    collision = Some(Direction::Left);
-                    min_boundary[0]
+                    (min_boundary[0], true)
                 };
                 let y = ((a * x) + c) / b * -1f32;
-                FPoint2::new(x, y)
+                let p = FPoint2::new(x, y);
+
+                if left_col {
+                    collision = Some((Direction::Left, p));
+                }
+                p
             };
             let mut p2 = {
-                let x = if let Some(p) = s2 {
+                let (x, right_col) = if let Some(p) = s2 {
                     if max_boundary[0] <= p[0] {
-                        // Right x collided
-                        collision = Some(Direction::Right);
-                        max_boundary[0]
+                        (max_boundary[0], true)
                     } else {
-                        p[0]
+                        (p[0], false)
                     }
                 } else {
-                    // Right x collided
-                    collision = Some(Direction::Right);
-                    max_boundary[0]
+                    (max_boundary[0], true)
                 };
                 let y = ((a * x) + c) / b * -1f32;
-                FPoint2::new(x, y)
+                let p = FPoint2::new(x, y);
+
+                if right_col {
+                    collision = Some((Direction::Right, p));
+                }
+                p
             };
             //dbg!(p1, p2);
 
@@ -392,24 +394,24 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1y_clipped = p1[1].clamp(miny, maxy);
             if p1y_clipped != p1[1] {
-                collision = match p1y_clipped == miny {
-                    true => Some(Direction::Down),
-                    false => Some(Direction::Up),
-                };
-
                 let x = ((b * p1y_clipped) + c) / a * -1f32;
                 p1 = FPoint2::new(x, p1y_clipped);
+
+                collision = match p1y_clipped == miny {
+                    true => Some((Direction::Down, p1)),
+                    false => Some((Direction::Up, p1)),
+                };
             }
 
             let p2y_clipped = p2[1].clamp(miny, maxy);
             if p2y_clipped != p2[1] {
-                collision = match p2y_clipped == miny {
-                    true => Some(Direction::Down),
-                    false => Some(Direction::Up),
-                };
-
                 let x = ((b * p2y_clipped) + c) / a * -1f32;
                 p2 = FPoint2::new(x, p2y_clipped);
+
+                collision = match p2y_clipped == miny {
+                    true => Some((Direction::Down, p2)),
+                    false => Some((Direction::Up, p2)),
+                };
             }
 
             if let Some(col_dir) = collision {
@@ -423,38 +425,40 @@ impl HalfEdge {
         } else {
             let mut collision = None;
             let mut p2 = {
-                let y = if let Some(p) = s2 {
+                let (y, down_col) = if let Some(p) = s2 {
                     if min_boundary[1] >= p[1] {
-                        // down y collided
-                        collision = Some(Direction::Down);
-                        min_boundary[1]
+                        (min_boundary[1], true)
                     } else {
-                        p[1]
+                        (p[1], false)
                     }
                 } else {
-                    // down y collided
-                    collision = Some(Direction::Down);
-                    min_boundary[1]
+                    (min_boundary[1], true)
                 };
                 let x = ((b * y) + c) / a * -1f32;
-                FPoint2::new(x, y)
+                let p = FPoint2::new(x, y);
+
+                if down_col {
+                    collision = Some((Direction::Down, p));
+                }
+                p
             };
             let mut p1 = {
-                let y = if let Some(p) = s1 {
+                let (y, up_col) = if let Some(p) = s1 {
                     if max_boundary[1] <= p[1] {
-                        // up y collided
-                        collision = Some(Direction::Up);
-                        max_boundary[1]
+                        (max_boundary[1], true)
                     } else {
-                        p[1]
+                        (p[1], false)
                     }
                 } else {
-                    // up y collided
-                    collision = Some(Direction::Up);
-                    max_boundary[1]
+                    (max_boundary[1], true)
                 };
                 let x = ((b * y) + c) / a * -1f32;
-                FPoint2::new(x, y)
+                let p = FPoint2::new(x, y);
+
+                if up_col {
+                    collision = Some((Direction::Up, p));
+                }
+                p
             };
             //dbg!(p1, p2);
 
@@ -468,24 +472,24 @@ impl HalfEdge {
             // a.is_subnormal()の場合、上の条件式で弾かれるのでaは有効な値があると仮定して勧めて良いかも。
             let p1x_clipped = p1[0].clamp(minx, maxx);
             if p1x_clipped != p1[0] {
-                collision = match p1x_clipped == minx {
-                    true => Some(Direction::Left),
-                    false => Some(Direction::Right),
-                };
-
                 let y = ((a * p1x_clipped) + c) / b * -1f32;
                 p1 = FPoint2::new(p1x_clipped, y);
+
+                collision = match p1x_clipped == minx {
+                    true => Some((Direction::Left, p1)),
+                    false => Some((Direction::Right, p1)),
+                };
             }
 
             let p2x_clipped = p2[0].clamp(minx, maxx);
             if p2x_clipped != p2[0] {
-                collision = match p2x_clipped == minx {
-                    true => Some(Direction::Left),
-                    false => Some(Direction::Right),
-                };
-
                 let y = ((a * p2x_clipped) + c) / b * -1f32;
                 p2 = FPoint2::new(p2x_clipped, y);
+
+                collision = match p2x_clipped == minx {
+                    true => Some((Direction::Left, p2)),
+                    false => Some((Direction::Right, p2)),
+                };
             }
 
             if let Some(col_dir) = collision {
@@ -505,9 +509,9 @@ impl HalfEdge {
                 let mut mut_ec = ec.borrow_mut();
                 let ve_type = match in_ve_type {
                     // もしOpenedなら、HalfEdgeの方向によって逆にして入れる必要がある。
-                    VoronoiEdgeType::Opened((dir, rev)) => match self.is_reversed_he {
-                        true => VoronoiEdgeType::Opened((dir, !rev)),
-                        false => VoronoiEdgeType::Opened((dir, !rev))
+                    VoronoiEdgeType::Opened((dp, rev)) => match self.is_reversed_he {
+                        true => VoronoiEdgeType::Opened((dp, !rev)),
+                        false => VoronoiEdgeType::Opened((dp, !rev))
                     },
                     v => v,
                 };

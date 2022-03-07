@@ -17,7 +17,7 @@ pub enum Direction {
 #[derive(Debug, Clone, Copy)]
 pub enum VoronoiEdgeType {
     Closed,
-    Opened((Direction, bool /* isReversed */)),
+    Opened(((Direction, FPoint2), bool /* isReversed */)),
 }
 
 pub fn is_nearly_same_fpoint2(lhs: FPoint2, rhs: FPoint2, epsilon: f32) -> bool {
@@ -147,6 +147,7 @@ impl Edge {
         // またoffsetはyの符号を変える。
         try_get_coefficients(&(self.end - self.start), &self.start)
     }
+
 }
 
 pub fn try_get_coefficients(offset: &FVector2, point: &FPoint2) -> Option<(f32, f32, f32)> {
